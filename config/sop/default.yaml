@@ -1,0 +1,100 @@
+# Default SOP Configuration for NexusDev MVP
+# Workflow: requirement -> design -> [HITL] -> coding -> review -> testing
+
+name: mvp_default
+description: "MVP workflow with human-in-the-loop approval at design stage"
+version: "1.0.0"
+
+# Global settings
+default_timeout_minutes: 30
+default_max_retries: 3
+auto_approve: false
+allow_stage_skip: false
+allow_rollback: true
+
+# Stage definitions
+stages:
+  - name: requirement_analysis
+    stage_type: REQUIREMENT_ANALYSIS
+    description: "Analyze user requirements and produce PRD with user stories"
+    agent_name: pm_agent
+    timeout_minutes: 20
+    max_retries: 2
+    requires_approval: false
+    expected_outputs:
+      - prd
+      - user_stories
+      - functional_requirements
+      - non_functional_requirements
+    on_success: system_design
+    on_failure: _FAILURE_
+
+  - name: system_design
+    stage_type: SYSTEM_DESIGN
+    description: "Design system architecture, APIs, and database schema"
+    agent_name: architect_agent
+    timeout_minutes: 30
+    max_retries: 2
+    requires_approval: true  # HITL checkpoint - must approve before coding
+    approval_timeout_hours: 24
+    approvers:
+      - tech_lead
+      - architect
+    expected_outputs:
+      - system_design
+      - api_spec
+      - database_schema
+      - architecture_diagram
+    required_inputs:
+      - requirement_analysis
+    on_success: coding
+    on_failure: _FAILURE_
+    on_reject: requirement_analysis  # Go back to requirements if rejected
+
+  - name: coding
+    stage_type: CODING
+    description: "Implement the system based on approved design"
+    agent_name: coder_agent
+    timeout_minutes: 45
+    max_retries: 3
+    requires_approval: false
+    expected_outputs:
+      - source_code
+      - configuration
+      - documentation
+    required_inputs:
+      - system_design
+    on_success: code_review
+    on_failure: _FAILURE_
+
+  - name: code_review
+    stage_type: CODE_REVIEW
+    description: "Review code for quality, security, and best practices"
+    agent_name: reviewer_agent
+    timeout_minutes: 20
+    max_retries: 2
+    requires_approval: false
+    expected_outputs:
+      - code_review_report
+    required_inputs:
+      - coding
+    on_success: testing
+    on_failure: coding  # Loop back for fixes
+
+  - name: testing
+    stage_type: TESTING
+    description: "Create and execute tests, generate coverage report"
+    agent_name: tester_agent
+    timeout_minutes: 30
+    max_retries: 2
+    requires_approval: false
+    expected_outputs:
+      - test_plan
+      - test_cases
+      - test_results
+      - coverage_report
+    required_inputs:
+      - coding
+      - code_review
+    on_success: _COMPLETE_
+    on_failure: coding  # Loop back for fixes

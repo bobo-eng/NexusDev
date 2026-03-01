@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database (optional for MVP, SQLite can be used)
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nexusdev
+      POSTGRES_PASSWORD: nexusdev
+      POSTGRES_DB: nexusdev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexusdev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and task queue (optional for MVP)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nexusdev:nexusdev@db:5432/nexusdev
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    env_file:
+      - config/env/.env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/app/artifacts
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+
+  # Worker for background tasks
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nexusdev:nexusdev@db:5432/nexusdev
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    env_file:
+      - config/env/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/app/artifacts
+    command: python -m apps.worker.main
+
+volumes:
+  postgres_data:
+  redis_data:

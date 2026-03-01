@@ -1,0 +1,85 @@
+# Default LLM Model Configuration
+
+# Default provider settings
+default_provider: openai
+default_model: gpt-4
+
+# Provider configurations
+providers:
+  openai:
+    name: OpenAI
+    models:
+      - name: gpt-4
+        context_window: 8192
+        max_tokens: 4096
+        temperature: 0.2
+        timeout_seconds: 120
+      - name: gpt-4-turbo
+        context_window: 128000
+        max_tokens: 4096
+        temperature: 0.2
+        timeout_seconds: 120
+      - name: gpt-3.5-turbo
+        context_window: 16385
+        max_tokens: 4096
+        temperature: 0.3
+        timeout_seconds: 60
+    
+  anthropic:
+    name: Anthropic
+    models:
+      - name: claude-3-opus-20240229
+        context_window: 200000
+        max_tokens: 4096
+        temperature: 0.2
+        timeout_seconds: 120
+      - name: claude-3-sonnet-20240229
+        context_window: 200000
+        max_tokens: 4096
+        temperature: 0.2
+        timeout_seconds: 120
+      - name: claude-3-haiku-20240307
+        context_window: 200000
+        max_tokens: 4096
+        temperature: 0.3
+        timeout_seconds: 60
+
+# Agent-specific model assignments
+agent_models:
+  pm_agent:
+    provider: openai
+    model: gpt-4
+    temperature: 0.3
+  
+  architect_agent:
+    provider: openai
+    model: gpt-4
+    temperature: 0.2
+  
+  coder_agent:
+    provider: openai
+    model: gpt-4
+    temperature: 0.1
+  
+  reviewer_agent:
+    provider: openai
+    model: gpt-4
+    temperature: 0.1
+  
+  tester_agent:
+    provider: openai
+    model: gpt-4
+    temperature: 0.2
+
+# Fallback configuration
+fallback:
+  enabled: true
+  fallback_provider: openai
+  fallback_model: gpt-3.5-turbo
+  max_fallback_attempts: 2
+
+# Cost optimization (for production)
+cost_optimization:
+  use_cheaper_for_drafts: true
+  draft_model: gpt-3.5-turbo
+  review_with_cheaper: false
