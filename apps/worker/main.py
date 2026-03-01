@@ -13,11 +13,13 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
+
 from core.domain.stage import Stage, StageStatus
 from core.services.stage_service import StageService
 from core.services.approval_service import ApprovalService
 from core.storage.database import Database, create_database
-from core.storage.repository import StageRepository
+from core.storage.models import StageModel
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +87,9 @@ class Worker:
     async def _process_pending_stages(self) -> None:
         """Process pending stages."""
         async with self.database.session() as db_session:
-            stage_repo = StageRepository(db_session)
-            
             # Query for pending stages
             result = await db_session.execute(
-                db_session.query(StageModel)
+                select(StageModel)
                 .where(StageModel.status == StageStatus.PENDING.value)
                 .order_by(StageModel.created_at)
                 .limit(self._max_concurrent)
@@ -123,12 +123,9 @@ class Worker:
         timeout_threshold = datetime.utcnow() - timedelta(minutes=30)  # Default 30 min timeout
         
         async with self.database.session() as db_session:
-            stage_repo = StageRepository(db_session)
-            
             # Query for running stages that have timed out
-            from core.storage.models import StageModel
             result = await db_session.execute(
-                db_session.query(StageModel)
+                select(StageModel)
                 .where(StageModel.status == StageStatus.RUNNING.value)
                 .where(StageModel.started_at < timeout_threshold)
             )

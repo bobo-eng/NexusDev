@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from core.hitl.approval_sm import ApprovalStateMachine, ApprovalState, ApprovalRecord
+from core.hitl.approval_sm import ApprovalAction, ApprovalStateMachine, ApprovalState, ApprovalRecord
 from core.storage.database import Database
 from core.storage.repository import ApprovalRepository
 
@@ -122,7 +122,7 @@ class ApprovalService:
             logger.error(f"Approval {approval_id} not found")
             return None
         
-        if not sm.can_transition("approve"):
+        if not sm.can_transition(ApprovalAction.APPROVE):
             logger.error(f"Cannot approve approval {approval_id} in state {sm.record.state.value}")
             return None
         
@@ -158,7 +158,7 @@ class ApprovalService:
             logger.error(f"Approval {approval_id} not found")
             return None
         
-        if not sm.can_transition("reject"):
+        if not sm.can_transition(ApprovalAction.REJECT):
             logger.error(f"Cannot reject approval {approval_id} in state {sm.record.state.value}")
             return None
         

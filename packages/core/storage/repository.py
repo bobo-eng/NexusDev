@@ -3,8 +3,9 @@
 Provides clean abstraction over database operations.
 """
 
-from typing import Generic, TypeVar
-from uuid import UUID
+from datetime import datetime
+from typing import Any, Generic, TypeVar
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +14,7 @@ from core.domain.session import Session
 from core.domain.stage import Stage
 from core.domain.artifact import Artifact
 from core.domain.review import Review
-from core.hitl.approval_sm import ApprovalRecord
+from core.hitl.approval_sm import ApprovalComment, ApprovalRecord, ApprovalState
 from core.storage.models import (
     SessionModel,
     StageModel,
@@ -411,7 +412,7 @@ class ReviewRepository(BaseRepository[Review, ReviewModel]):
 
 class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
     """Repository for ApprovalRecord entities."""
-    
+
     async def get_by_id(self, id: UUID) -> ApprovalRecord | None:
         """Get approval record by ID."""
         result = await self.session.execute(
@@ -419,7 +420,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
         model = result.scalar_one_or_none()
         return self._model_to_record(model) if model else None
-    
+
     async def get_by_session(self, session_id: UUID) -> list[ApprovalRecord]:
         """Get all approval records for a session."""
         result = await self.session.execute(
@@ -429,7 +430,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
-    
+
     async def get_by_stage(self, stage_id: UUID) -> list[ApprovalRecord]:
         """Get all approval records for a stage."""
         result = await self.session.execute(
@@ -439,23 +440,21 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
-    
+
     async def get_by_state(
         self,
         state: str,
         session_id: UUID | None = None,
     ) -> list[ApprovalRecord]:
         """Get approval records by state."""
-        from sqlalchemy import and_
-        
         query = select(ApprovalRecordModel).where(ApprovalRecordModel.state == state)
         if session_id:
             query = query.where(ApprovalRecordModel.session_id == session_id)
-        
+
         result = await self.session.execute(query)
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
-    
+
     async def create(self, entity: ApprovalRecord) -> ApprovalRecord:
         """Create new approval record."""
         model = ApprovalRecordModel(
@@ -463,8 +462,8 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
             session_id=entity.session_id,
             stage_id=entity.stage_id,
             stage_name=entity.stage_name,
-            artifact_ids=entity.artifact_ids,
-            state=entity.state.value,
+            artifact_ids=[str(a) for a in entity.artifact_ids],
+            state=entity.state.value if isinstance(entity.state, ApprovalState) else str(entity.state),
             requested_by=entity.requested_by,
             requested_at=entity.requested_at,
             request_message=entity.request_message,
@@ -475,14 +474,14 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
             rejected_at=entity.rejected_at,
             rejection_reason=entity.rejection_reason,
             timeout_at=entity.timeout_at,
-            comments=[c.__dict__ for c in entity.comments],
-            history=entity.history,
-            metadata=entity.metadata,
+            comments=self._serialize_comments(entity.comments),
+            history=self._to_json(entity.history),
+            metadata=self._to_json(entity.metadata),
         )
         self.session.add(model)
         await self.session.flush()
         return entity
-    
+
     async def update(self, entity: ApprovalRecord) -> ApprovalRecord:
         """Update existing approval record."""
         result = await self.session.execute(
@@ -490,19 +489,19 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
         model = result.scalar_one_or_none()
         if model:
-            model.state = entity.state.value
+            model.state = entity.state.value if isinstance(entity.state, ApprovalState) else str(entity.state)
             model.approved_by = entity.approved_by
             model.approved_at = entity.approved_at
             model.approval_message = entity.approval_message
             model.rejected_by = entity.rejected_by
             model.rejected_at = entity.rejected_at
             model.rejection_reason = entity.rejection_reason
-            model.comments = [c.__dict__ for c in entity.comments]
-            model.history = entity.history
-            model.metadata = entity.metadata
+            model.comments = self._serialize_comments(entity.comments)
+            model.history = self._to_json(entity.history)
+            model.metadata = self._to_json(entity.metadata)
             await self.session.flush()
         return entity
-    
+
     async def delete(self, id: UUID) -> bool:
         """Delete approval record by ID."""
         result = await self.session.execute(
@@ -514,22 +513,19 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
             await self.session.flush()
             return True
         return False
-    
+
     def _model_to_record(self, model: ApprovalRecordModel | None) -> ApprovalRecord | None:
         """Convert database model to domain entity."""
         if not model:
             return None
-        
-        from datetime import datetime
-        from uuid import UUID as PyUUID
-        
+
         record = ApprovalRecord(
-            id=PyUUID(str(model.id)),
-            session_id=PyUUID(str(model.session_id)),
-            stage_id=PyUUID(str(model.stage_id)),
+            id=UUID(str(model.id)),
+            session_id=UUID(str(model.session_id)),
+            stage_id=UUID(str(model.stage_id)),
             stage_name=model.stage_name,
-            artifact_ids=[PyUUID(str(a)) for a in model.artifact_ids],
-            state=model.state,
+            artifact_ids=[UUID(str(a)) for a in (model.artifact_ids or []) if a],
+            state=self._parse_state(model.state),
             requested_by=model.requested_by,
             requested_at=model.requested_at,
             request_message=model.request_message,
@@ -540,8 +536,92 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
             rejected_at=model.rejected_at,
             rejection_reason=model.rejection_reason,
             timeout_at=model.timeout_at,
-            comments=model.comments or [],
+            comments=self._deserialize_comments(model.comments),
             history=model.history or [],
             metadata=model.metadata or {},
         )
         return record
+
+    def _parse_state(self, value: str | ApprovalState) -> ApprovalState:
+        if isinstance(value, ApprovalState):
+            return value
+        try:
+            return ApprovalState(value)
+        except ValueError:
+            return ApprovalState.PENDING
+
+    def _serialize_comments(self, comments: list[ApprovalComment] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for comment in comments or []:
+            if isinstance(comment, ApprovalComment):
+                raw = {
+                    "id": str(comment.id),
+                    "author": comment.author,
+                    "content": comment.content,
+                    "created_at": comment.created_at.isoformat(),
+                    "is_internal": comment.is_internal,
+                }
+            elif isinstance(comment, dict):
+                raw = {
+                    "id": str(comment.get("id")) if comment.get("id") else str(uuid4()),
+                    "author": str(comment.get("author", "")),
+                    "content": str(comment.get("content", "")),
+                    "created_at": self._parse_datetime(comment.get("created_at")).isoformat(),
+                    "is_internal": bool(comment.get("is_internal", False)),
+                }
+            else:
+                continue
+            serialized.append(raw)
+        return serialized
+
+    def _deserialize_comments(self, comments_data: Any) -> list[ApprovalComment]:
+        comments: list[ApprovalComment] = []
+        if not isinstance(comments_data, list):
+            return comments
+
+        for item in comments_data:
+            if isinstance(item, ApprovalComment):
+                comments.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+
+            comment_id = item.get("id")
+            try:
+                parsed_id = UUID(str(comment_id)) if comment_id else uuid4()
+            except (TypeError, ValueError):
+                parsed_id = uuid4()
+
+            comments.append(
+                ApprovalComment(
+                    id=parsed_id,
+                    author=str(item.get("author", "")),
+                    content=str(item.get("content", "")),
+                    created_at=self._parse_datetime(item.get("created_at")),
+                    is_internal=bool(item.get("is_internal", False)),
+                )
+            )
+
+        return comments
+
+    def _parse_datetime(self, value: Any) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str) and value:
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                pass
+        return datetime.utcnow()
+
+    def _to_json(self, value: Any) -> Any:
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, list):
+            return [self._to_json(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self._to_json(v) for k, v in value.items()}
+        return value
+

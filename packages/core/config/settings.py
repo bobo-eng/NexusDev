@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     llm: LLMProviderSettings = Field(default_factory=LLMProviderSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
-    api: APISettings = Field(defaultFactory=APISettings)
+    api: APISettings = Field(default_factory=APISettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
     hitl: HITLSettings = Field(default_factory=HITLSettings)
     sop: SOPSettings = Field(default_factory=SOPSettings)

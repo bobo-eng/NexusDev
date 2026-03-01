@@ -109,7 +109,7 @@ class SessionService:
     async def run_stage(
         self,
         session_id: UUID,
-        stage_type: StageType | None = None,
+        stage_type: StageType | str | None = None,
     ) -> dict[str, Any]:
         """Execute a workflow stage.
         
@@ -134,17 +134,24 @@ class SessionService:
             if not session.is_active():
                 return {"error": f"Session is not active (status: {session.status.value})"}
             
+            existing_stages = await stage_repo.get_by_session(session_id)
+
+            if isinstance(stage_type, str):
+                try:
+                    stage_type = StageType(stage_type)
+                except ValueError:
+                    return {"error": f"Invalid stage type: {stage_type}"}
+
             # Determine stage to run
             if stage_type is None:
-                stage_type = self._determine_next_stage_type(session)
-            
+                stage_type = self._determine_next_stage_type(session, existing_stages)
+
             # Get stage definition
             stage_def = self._get_stage_definition(stage_type)
             if not stage_def:
                 return {"error": f"Unknown stage type: {stage_type}"}
-            
+
             # Check for existing stage (idempotency)
-            existing_stages = await stage_repo.get_by_session(session_id)
             for existing in existing_stages:
                 if existing.stage_type == stage_type and existing.status in [
                     StageStatus.PENDING, StageStatus.RUNNING, StageStatus.WAITING_APPROVAL
@@ -167,7 +174,7 @@ class SessionService:
                 stage_type=stage_type,
                 description=stage_def.description,
                 agent_name=stage_def.agent_name,
-                sequence=len(session.completed_stages),
+                sequence=len(existing_stages),
                 max_retries=stage_def.max_retries,
                 requires_approval=stage_def.requires_approval,
             )
@@ -346,39 +353,47 @@ class SessionService:
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
-            
+
             session = await session_repo.get_by_id(session_id)
             if not session:
                 return {"error": "Session not found"}
-            
+
             if not session.can_approve():
                 return {"error": f"Session cannot be approved (status: {session.status.value})"}
-            
+
             stage = await stage_repo.get_by_id(stage_id)
             if not stage:
                 return {"error": "Stage not found"}
-            
+
             if stage.status != StageStatus.WAITING_APPROVAL:
                 return {"error": f"Stage is not waiting for approval (status: {stage.status.value})"}
-            
+
             # Approve stage
             stage.approve(approved_by, comment)
             await stage_repo.update(stage)
-            
+
             # Update session
             session.mark_approved()
             await session_repo.update(session)
-            
-            logger.info(f"[Session {session_id}] Stage {stage.name} approved by {approved_by}")
-            
-            return {
-                "session_id": str(session_id),
-                "stage_id": str(stage_id),
-                "status": "approved",
-                "approved_by": approved_by,
-                "message": comment,
-            }
-    
+
+        await self._sync_approval_decision(
+            session_id=session_id,
+            stage_id=stage_id,
+            actor=approved_by,
+            message=comment,
+            approved=True,
+        )
+
+        logger.info(f"[Session {session_id}] Stage {stage_id} approved by {approved_by}")
+
+        return {
+            "session_id": str(session_id),
+            "stage_id": str(stage_id),
+            "status": "approved",
+            "approved_by": approved_by,
+            "message": comment,
+        }
+
     async def reject_stage(
         self,
         session_id: UUID,
@@ -390,39 +405,91 @@ class SessionService:
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
-            
+
             session = await session_repo.get_by_id(session_id)
             if not session:
                 return {"error": "Session not found"}
-            
+
             if not session.can_reject():
                 return {"error": f"Session cannot be rejected (status: {session.status.value})"}
-            
+
             stage = await stage_repo.get_by_id(stage_id)
             if not stage:
                 return {"error": "Stage not found"}
-            
+
             if stage.status != StageStatus.WAITING_APPROVAL:
                 return {"error": f"Stage is not waiting for approval (status: {stage.status.value})"}
-            
+
             # Reject stage
             stage.reject(rejected_by, reason)
             await stage_repo.update(stage)
-            
+
             # Update session
             session.mark_rejected()
             await session_repo.update(session)
-            
-            logger.info(f"[Session {session_id}] Stage {stage.name} rejected by {rejected_by}")
-            
-            return {
-                "session_id": str(session_id),
-                "stage_id": str(stage_id),
-                "status": "rejected",
-                "rejected_by": rejected_by,
-                "reason": reason,
-            }
-    
+
+        await self._sync_approval_decision(
+            session_id=session_id,
+            stage_id=stage_id,
+            actor=rejected_by,
+            message=reason,
+            approved=False,
+        )
+
+        logger.info(f"[Session {session_id}] Stage {stage_id} rejected by {rejected_by}")
+
+        return {
+            "session_id": str(session_id),
+            "stage_id": str(stage_id),
+            "status": "rejected",
+            "rejected_by": rejected_by,
+            "reason": reason,
+        }
+
+    async def _sync_approval_decision(
+        self,
+        session_id: UUID,
+        stage_id: UUID,
+        actor: str,
+        message: str,
+        approved: bool,
+    ) -> None:
+        """Keep ApprovalRecord state aligned with stage/session decision."""
+        from core.hitl.approval_sm import ApprovalState
+        from core.services.approval_service import ApprovalService
+
+        approval_service = ApprovalService(self.database)
+        approvals = await approval_service.get_session_approvals(session_id)
+
+        active_state_values = {
+            ApprovalState.PENDING.value,
+            ApprovalState.IN_REVIEW.value,
+            ApprovalState.ESCALATED.value,
+        }
+
+        candidates = []
+        for approval in approvals:
+            state_value = approval.state.value if hasattr(approval.state, "value") else str(approval.state)
+            if approval.stage_id == stage_id and state_value in active_state_values:
+                candidates.append(approval)
+
+        if not candidates:
+            logger.warning(
+                f"[Session {session_id}] No active approval record found for stage {stage_id}"
+            )
+            return
+
+        latest = max(candidates, key=lambda record: record.requested_at)
+        if approved:
+            synced = await approval_service.approve(latest.id, actor, message)
+        else:
+            synced = await approval_service.reject(latest.id, actor, message)
+
+        if not synced:
+            logger.warning(
+                f"[Session {session_id}] Failed to sync approval record {latest.id}"
+            )
+
     async def list_sessions(
         self,
         status: SessionStatus | None = None,
@@ -438,10 +505,12 @@ class SessionService:
                 # Get all sessions with pagination
                 return await repo.get_all(limit=limit, offset=offset)
     
-    def _determine_next_stage_type(self, session: Session) -> StageType:
-        """Determine the next stage type based on session progress."""
-        completed = len(session.completed_stages)
-        
+    def _determine_next_stage_type(
+        self,
+        session: Session,
+        existing_stages: list[Stage] | None = None,
+    ) -> StageType:
+        """Determine the next stage type based on actual stage status."""
         stage_order = [
             StageType.REQUIREMENT_ANALYSIS,
             StageType.SYSTEM_DESIGN,
@@ -449,11 +518,38 @@ class SessionService:
             StageType.CODE_REVIEW,
             StageType.TESTING,
         ]
-        
-        if completed < len(stage_order):
-            return stage_order[completed]
-        
-        return StageType.TESTING
+
+        if not existing_stages:
+            completed = len(session.completed_stages)
+            if completed < len(stage_order):
+                return stage_order[completed]
+            return stage_order[-1]
+
+        latest_by_type: dict[StageType, Stage] = {}
+        for stage in sorted(existing_stages, key=lambda s: s.sequence, reverse=True):
+            if stage.stage_type not in latest_by_type:
+                latest_by_type[stage.stage_type] = stage
+
+        completed_states = {StageStatus.APPROVED, StageStatus.COMPLETED, StageStatus.SKIPPED}
+        active_states = {
+            StageStatus.PENDING,
+            StageStatus.RUNNING,
+            StageStatus.WAITING_APPROVAL,
+            StageStatus.FAILED,
+            StageStatus.REJECTED,
+        }
+
+        for candidate in stage_order:
+            stage = latest_by_type.get(candidate)
+            if stage is None:
+                return candidate
+            if stage.status in active_states:
+                return candidate
+            if stage.status in completed_states:
+                continue
+            return candidate
+
+        return stage_order[-1]
     
     def _get_stage_definition(self, stage_type: StageType) -> Any:
         """Get stage definition from SOP."""

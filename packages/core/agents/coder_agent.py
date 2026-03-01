@@ -48,12 +48,13 @@ class CoderAgent(BaseAgent):
         user_prompt = self._build_prompt(context)
         
         # Call LLM
-        result = await self._call_llm(
+        result, metadata = await self._call_llm(
             system_prompt=self.get_system_prompt(),
             user_prompt=user_prompt,
             output_schema=CodingOutput,
         )
-        
+
+        self._execution_metadata = metadata
         return result
     
     def _build_prompt(self, context: dict[str, Any]) -> str:
