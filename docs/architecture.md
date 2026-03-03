@@ -215,7 +215,9 @@ CLI/API ──► SessionService.run_stage()
 ```
 
 Note: LangGraph nodes/routers are available in `packages/core/workflow/` but are
-not the default execution entrypoint in the current runtime path.
+not the default execution entrypoint in the current runtime path. The
+`wait_for_approval_node` now polls approval state from persistence and can
+route on approved/rejected/timed_out outcomes.
 
 ### 3. Human Approval
 

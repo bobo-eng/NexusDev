@@ -17,9 +17,22 @@ from core.agents.reviewer_agent import ReviewerAgent
 from core.agents.tester_agent import TesterAgent
 from core.domain.session import SessionStatus
 from core.domain.stage import StageStatus
+from core.hitl.approval_sm import ApprovalState
+from core.services.approval_service import ApprovalService
+from core.storage.database import Database, create_database
 from core.workflow.graph import DevelopmentState
 
 logger = logging.getLogger(__name__)
+_workflow_db: Database | None = None
+
+
+async def _get_workflow_db() -> Database:
+    """Get shared database instance for workflow nodes."""
+    global _workflow_db
+    if _workflow_db is None:
+        _workflow_db = create_database()
+        await _workflow_db.create_tables()
+    return _workflow_db
 
 
 async def requirement_analysis_node(state: DevelopmentState) -> DevelopmentState:
@@ -284,7 +297,11 @@ async def error_handler_node(state: DevelopmentState) -> DevelopmentState:
     state.session_status = SessionStatus.FAILED
     state.should_stop = True
 
-    # Could add error notification, cleanup, etc. here
+    state.add_shared_context("manual_recovery_required", True)
+    state.add_shared_context(
+        "manual_recovery_hint",
+        f"POST /sessions/{state.session_id}/recover with run_next=true",
+    )
 
     return state
 
@@ -307,12 +324,47 @@ async def wait_for_approval_node(state: DevelopmentState) -> DevelopmentState:
     state.current_stage = "wait_for_approval"
     state.stage_status = StageStatus.WAITING_APPROVAL
 
-    # In a real implementation, this would:
-    # 1. Check approval status from database
-    # 2. Update state.approval_decision if approved/rejected
-    # 3. Return appropriate status for routing
+    try:
+        db = await _get_workflow_db()
+        approval_service = ApprovalService(db)
 
-    # For now, we just keep waiting
-    # The actual approval is handled by the API/CLI calling approve_stage
+        approval = None
+        if state.approval_record_id:
+            approval = await approval_service.get_approval(state.approval_record_id)
+
+        if not approval:
+            approvals = await approval_service.get_session_approvals(state.session_id)
+            if approvals:
+                approval = max(approvals, key=lambda item: item.requested_at)
+                state.approval_record_id = approval.id
+
+        if not approval:
+            return state
+
+        if approval.state == ApprovalState.APPROVED:
+            state.approval_decision = "approved"
+            state.stage_status = StageStatus.APPROVED
+            state.session_status = SessionStatus.APPROVED
+            return state
+
+        if approval.state == ApprovalState.REJECTED:
+            state.approval_decision = "rejected"
+            state.stage_status = StageStatus.REJECTED
+            state.session_status = SessionStatus.REJECTED
+            return state
+
+        if approval.state in {ApprovalState.TIMED_OUT, ApprovalState.CANCELLED}:
+            state.approval_decision = "failed"
+            state.stage_status = StageStatus.FAILED
+            state.session_status = SessionStatus.FAILED
+            state.error_message = f"Approval {approval.id} ended with state {approval.state.value}"
+            return state
+
+        state.approval_decision = None
+        state.stage_status = StageStatus.WAITING_APPROVAL
+        state.session_status = SessionStatus.WAITING_APPROVAL
+    except Exception as exc:
+        logger.warning(f"[Session {state.session_id}] Failed to poll approval status: {exc}")
+        state.stage_status = StageStatus.WAITING_APPROVAL
 
     return state

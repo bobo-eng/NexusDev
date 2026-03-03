@@ -524,11 +524,28 @@ class ApprovalService:
         Returns:
             List of pending approval records
         """
+        return await self.list_approvals(
+            state=ApprovalState.PENDING.value,
+            session_id=session_id,
+            limit=100,
+            offset=0,
+        )
+
+    async def list_approvals(
+        self,
+        state: str | None = None,
+        session_id: UUID | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ApprovalRecord]:
+        """List approvals with optional filters and pagination."""
         async with self.database.session() as db_session:
             repo = ApprovalRepository(db_session)
-            return await repo.get_by_state(
-                ApprovalState.PENDING.value,
+            return await repo.list_records(
+                state=state,
                 session_id=session_id,
+                limit=limit,
+                offset=offset,
             )
 
     async def get_session_approvals(

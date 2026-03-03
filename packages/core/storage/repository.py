@@ -436,6 +436,25 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
 
+    async def list_records(
+        self,
+        state: str | None = None,
+        session_id: UUID | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ApprovalRecord]:
+        """List approval records with optional filtering and pagination."""
+        query = select(ApprovalRecordModel)
+        if state:
+            query = query.where(ApprovalRecordModel.state == state)
+        if session_id:
+            query = query.where(ApprovalRecordModel.session_id == session_id)
+
+        query = query.order_by(ApprovalRecordModel.requested_at.desc()).limit(limit).offset(offset)
+        result = await self.session.execute(query)
+        models = result.scalars().all()
+        return [self._model_to_record(m) for m in models if m]
+
     async def create(self, entity: ApprovalRecord) -> ApprovalRecord:
         """Create new approval record."""
         model = ApprovalRecordModel(

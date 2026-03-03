@@ -15,6 +15,7 @@ from uuid import UUID
 import os
 
 from core.domain.session import SessionStatus
+from core.hitl.approval_sm import ApprovalState
 from core.security.rbac import Permission, get_rbac
 from core.services.approval_service import ApprovalService
 from core.services.session_service import SessionService
@@ -137,6 +138,10 @@ def create_app() -> FastAPI:
         author: str = "api-user"
         content: str = Field(..., min_length=1, max_length=5000)
         is_internal: bool = False
+
+    class RecoverSessionRequest(BaseModel):
+        user: str = "api-user"
+        run_next: bool = False
 
     class StatusResponse(BaseModel):
         session_id: str
@@ -268,6 +273,30 @@ def create_app() -> FastAPI:
 
         return result
 
+    @app.post("/sessions/{session_id}/recover")
+    async def recover_session(
+        session_id: str,
+        request: RecoverSessionRequest,
+        *,
+        service: SessionServiceDep,
+    ):
+        """Recover a failed/rejected session."""
+        _ensure_permission(request.user, Permission.SESSION_UPDATE)
+        try:
+            uuid = UUID(session_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid session ID format") from None
+
+        result = await service.recover_session(
+            session_id=uuid,
+            recovered_by=request.user,
+            run_next=request.run_next,
+        )
+        if "error" in result:
+            _raise_service_error(result["error"])
+
+        return result
+
     @app.post("/sessions/{session_id}/stages/{stage_id}/approve")
     async def approve_stage(
         session_id: str,
@@ -329,11 +358,24 @@ def create_app() -> FastAPI:
     async def list_approvals(
         session_id: str | None = None,
         user: str = "api-user",
+        state: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
         *,
         service: ApprovalServiceDep,
     ):
         """List pending approvals."""
         _ensure_permission(user, Permission.APPROVAL_READ)
+
+        approval_state = ApprovalState.PENDING.value
+        if state:
+            try:
+                approval_state = ApprovalState(state).value
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid approval state") from None
+
+        limit = max(1, min(limit, 500))
+        offset = max(offset, 0)
 
         session_uuid = None
         if session_id:
@@ -342,7 +384,12 @@ def create_app() -> FastAPI:
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid session ID format") from None
 
-        approvals = await service.get_pending_approvals(session_uuid)
+        approvals = await service.list_approvals(
+            state=approval_state,
+            session_id=session_uuid,
+            limit=limit,
+            offset=offset,
+        )
 
         return [
             {

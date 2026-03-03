@@ -236,3 +236,54 @@ async def test_approve_forbidden_without_rbac_permission(api_client: AsyncClient
 
     assert response.status_code == 403
     assert response.json()["detail"] == "User 'developer' lacks permission 'approval:approve'"
+
+
+@pytest.mark.asyncio
+async def test_list_approvals_filter_and_pagination(api_client: AsyncClient) -> None:
+    db = await api_main.get_db()
+    service = ApprovalService(db)
+
+    pending = await service.create_approval(
+        session_id=uuid4(),
+        stage_id=uuid4(),
+        stage_name="system_design",
+        requested_by="system",
+    )
+    approved = await service.create_approval(
+        session_id=uuid4(),
+        stage_id=uuid4(),
+        stage_name="system_design",
+        requested_by="system",
+    )
+    await service.approve(approved.id, approved_by="tech_lead", message="ok")
+
+    response = await api_client.get(
+        "/approvals",
+        params={"state": "approved", "limit": 1, "offset": 0, "user": "api-user"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == str(approved.id)
+    assert payload[0]["state"] == "approved"
+
+    pending_response = await api_client.get(
+        "/approvals",
+        params={"state": "pending", "limit": 10, "offset": 0, "user": "api-user"},
+    )
+    assert pending_response.status_code == 200
+    pending_payload = pending_response.json()
+    pending_ids = {item["id"] for item in pending_payload}
+    assert str(pending.id) in pending_ids
+
+
+@pytest.mark.asyncio
+async def test_list_approvals_invalid_state(api_client: AsyncClient) -> None:
+    response = await api_client.get(
+        "/approvals",
+        params={"state": "unknown_state", "user": "api-user"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid approval state"

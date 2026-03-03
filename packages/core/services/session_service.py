@@ -603,6 +603,42 @@ class SessionService:
                 # Get all sessions with pagination
                 return await repo.get_all(limit=limit, offset=offset)
 
+    async def recover_session(
+        self,
+        session_id: UUID,
+        recovered_by: str,
+        run_next: bool = False,
+    ) -> dict[str, Any]:
+        """Recover a failed/rejected session and optionally continue workflow."""
+        if not get_rbac().check_permission(recovered_by, Permission.SESSION_UPDATE):
+            return {"error": f"Permission denied for user '{recovered_by}' to recover sessions"}
+
+        previous_status = ""
+        async with self.database.session() as db_session:
+            repo = SessionRepository(db_session)
+            session = await repo.get_by_id(session_id)
+            if not session:
+                return {"error": "Session not found"}
+
+            if session.status not in {SessionStatus.FAILED, SessionStatus.REJECTED}:
+                return {"error": f"Session is not recoverable (status: {session.status.value})"}
+
+            previous_status = session.status.value
+            session.mark_running()
+            await repo.update(session)
+
+        response: dict[str, Any] = {
+            "session_id": str(session_id),
+            "status": "recovered",
+            "previous_status": previous_status,
+            "recovered_by": recovered_by,
+        }
+
+        if run_next:
+            response["next_stage"] = await self.run_stage(session_id)
+
+        return response
+
     def _determine_next_stage_type(self, stages: list[Stage]) -> StageType:
         """Determine the next stage type based on session progress."""
         if not stages:

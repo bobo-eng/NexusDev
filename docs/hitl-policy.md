@@ -280,6 +280,12 @@ Organizations can customize:
 GET /approvals
 ```
 
+Supports query params:
+- `state` (e.g. `pending`, `approved`, `rejected`)
+- `session_id`
+- `limit`
+- `offset`
+
 ### Get Approval Details
 ```
 GET /approvals/{approval_id}
@@ -309,6 +315,15 @@ POST /approvals/{approval_id}/comments
 {
     "author": "tech_lead",
     "content": "Consider adding caching"
+}
+```
+
+### Recover Session (manual recovery)
+```
+POST /sessions/{session_id}/recover
+{
+    "user": "tech_lead",
+    "run_next": true
 }
 ```
 

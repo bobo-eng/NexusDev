@@ -159,3 +159,60 @@ async def test_approve_stage_rejects_user_without_rbac_permission(
 
     assert "error" in result
     assert "Permission denied" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_recover_failed_session(session_service: SessionService, monkeypatch) -> None:
+    async def fail_pm_execute(self, context):
+        del context
+        raise RuntimeError("pm failed")
+
+    monkeypatch.setattr(PMAgent, "execute", fail_pm_execute)
+
+    session = await session_service.create_session(
+        name="Recover test",
+        requirement="Build a resilient API",
+    )
+
+    failed = await session_service.run_stage(session.id)
+    assert failed["status"] == "failed"
+
+    recover = await session_service.recover_session(
+        session_id=session.id,
+        recovered_by="tech_lead",
+        run_next=False,
+    )
+    assert recover["status"] == "recovered"
+    assert recover["previous_status"] == "failed"
+
+    status = await session_service.get_status(session.id)
+    assert status["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_recover_session_permission_denied(
+    session_service: SessionService, monkeypatch
+) -> None:
+    async def fail_pm_execute(self, context):
+        del context
+        raise RuntimeError("pm failed")
+
+    monkeypatch.setattr(PMAgent, "execute", fail_pm_execute)
+    monkeypatch.setenv("RBAC_ENABLED", "true")
+    monkeypatch.setenv("RBAC_DEFAULT_ROLE", "viewer")
+    monkeypatch.setenv("RBAC_USER_ROLES", "system:admin,tech_lead:viewer")
+
+    session = await session_service.create_session(
+        name="Recover permission test",
+        requirement="Build a resilient API",
+    )
+    failed = await session_service.run_stage(session.id)
+    assert failed["status"] == "failed"
+
+    recover = await session_service.recover_session(
+        session_id=session.id,
+        recovered_by="tech_lead",
+        run_next=False,
+    )
+    assert "error" in recover
+    assert "Permission denied" in recover["error"]
