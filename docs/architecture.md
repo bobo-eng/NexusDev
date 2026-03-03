@@ -66,6 +66,7 @@ The approval state machine supports:
 - Reject with reason
 - Escalate to higher authority
 - Timeout handling
+- Approver allowlist enforcement from SOP `approvers`
 
 ## Component Details
 
@@ -264,8 +265,9 @@ async def _call_llm(...) -> T:
 
 1. **API Keys**: Stored in environment variables, never in code
 2. **Secrets**: Not included in artifacts or logs
-3. **Approval**: Critical stages require human approval
-4. **Sandboxing**: Code execution in isolated environment (future)
+3. **Approval**: Critical stages require human approval with SOP approver allowlists
+4. **RBAC**: API and services enforce role permissions for approval actions
+5. **Sandboxing**: Code execution in isolated environment (future)
 
 ## Scalability
 

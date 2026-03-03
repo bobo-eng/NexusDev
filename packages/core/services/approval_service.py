@@ -1,10 +1,14 @@
 """Approval service for HITL workflow."""
 
 import logging
+import os
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+import httpx
+
+from core.config.settings import get_settings
 from core.hitl.approval_sm import (
     ApprovalAction,
     ApprovalRecord,
@@ -12,6 +16,7 @@ from core.hitl.approval_sm import (
     ApprovalStateMachine,
 )
 from core.observability.metrics import get_metrics
+from core.security.rbac import Permission, get_rbac
 from core.storage.database import Database
 from core.storage.repository import ApprovalRepository
 
@@ -40,6 +45,79 @@ class ApprovalService:
         delta = datetime.utcnow() - requested_at
         return max(delta.total_seconds(), 0.0) / 3600.0
 
+    def _normalize_actor(self, actor: str) -> str:
+        """Normalize actor identifier for comparisons."""
+        return actor.strip().lower()
+
+    def _get_approvers(self, record: ApprovalRecord) -> list[str]:
+        """Get normalized approvers configured on an approval."""
+        raw = record.metadata.get("approvers", [])
+        if not isinstance(raw, list):
+            return []
+        return [self._normalize_actor(item) for item in raw if isinstance(item, str) and item]
+
+    def is_approver(self, record: ApprovalRecord, actor: str) -> bool:
+        """Check if actor is in approval allowlist (or no allowlist configured)."""
+        approvers = self._get_approvers(record)
+        if not approvers:
+            return True
+        return self._normalize_actor(actor) in approvers
+
+    def can_cancel(self, record: ApprovalRecord, actor: str) -> bool:
+        """Check whether actor can cancel approval."""
+        if self.is_approver(record, actor):
+            return True
+        return self._normalize_actor(record.requested_by) == self._normalize_actor(actor)
+
+    def _has_permission(self, actor: str, permission: Permission) -> bool:
+        """Check RBAC permission for actor."""
+        return get_rbac().check_permission(actor, permission)
+
+    def _remaining_timeout_hours(self, record: ApprovalRecord) -> float | None:
+        """Get remaining timeout hours for a record."""
+        if not record.timeout_at:
+            return None
+        return (record.timeout_at - datetime.utcnow()).total_seconds() / 3600.0
+
+    async def _send_notification(
+        self,
+        event: str,
+        record: ApprovalRecord,
+        actor: str = "",
+        message: str = "",
+    ) -> None:
+        """Send approval notifications (log + optional webhook)."""
+        webhook_url = os.getenv("HITL_WEBHOOK_URL", "").strip()
+        notifications_enabled = False
+        try:
+            notifications_enabled = bool(get_settings().hitl.enable_notifications)
+        except Exception:
+            notifications_enabled = False
+
+        if not notifications_enabled and not webhook_url:
+            return
+
+        payload = {
+            "event": event,
+            "approval_id": str(record.id),
+            "session_id": str(record.session_id),
+            "stage_id": str(record.stage_id),
+            "stage_name": record.stage_name,
+            "state": record.state.value,
+            "actor": actor,
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        logger.info(f"Approval notification event={event} approval_id={record.id} actor={actor}")
+
+        if webhook_url:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(webhook_url, json=payload)
+            except Exception as exc:
+                logger.warning(f"Failed to deliver approval webhook notification: {exc}")
+
     async def _load_to_cache(self, approval_id: UUID) -> ApprovalStateMachine | None:
         """Load approval from DB to cache."""
         if approval_id in self._approval_cache:
@@ -64,6 +142,7 @@ class ApprovalService:
                 await repo.update(sm.record)
             else:
                 await repo.create(sm.record)
+        self._approval_cache[sm.record.id] = sm
 
     async def create_approval(
         self,
@@ -74,6 +153,7 @@ class ApprovalService:
         request_message: str = "",
         timeout_hours: int = 24,
         artifact_ids: list[UUID] | None = None,
+        approvers: list[str] | None = None,
     ) -> ApprovalRecord:
         """Create a new approval request.
 
@@ -85,6 +165,7 @@ class ApprovalService:
             request_message: Request message
             timeout_hours: Timeout in hours
             artifact_ids: Related artifact IDs
+            approvers: Optional explicit list of approver identifiers
 
         Returns:
             Created approval record
@@ -98,6 +179,10 @@ class ApprovalService:
             timeout_hours=timeout_hours,
             artifact_ids=artifact_ids or [],
         )
+        if approvers:
+            sm.record.metadata["approvers"] = [
+                self._normalize_actor(item) for item in approvers if item
+            ]
 
         # Persist to database
         await self._save_to_db(sm)
@@ -109,7 +194,12 @@ class ApprovalService:
             f"[Session {session_id}] Created approval {sm.record.id} for stage {stage_name}"
         )
 
-        # TODO: Send notification to approvers
+        await self._send_notification(
+            event="approval.created",
+            record=sm.record,
+            actor=requested_by,
+            message=request_message,
+        )
 
         return sm.record
 
@@ -134,6 +224,14 @@ class ApprovalService:
             logger.error(f"Approval {approval_id} not found")
             return None
 
+        if not self._has_permission(approved_by, Permission.APPROVAL_APPROVE):
+            logger.error(f"User {approved_by} lacks permission {Permission.APPROVAL_APPROVE.value}")
+            return None
+
+        if not self.is_approver(sm.record, approved_by):
+            logger.error(f"User {approved_by} cannot approve approval {approval_id}")
+            return None
+
         if not sm.can_transition(ApprovalAction.APPROVE):
             logger.error(f"Cannot approve approval {approval_id} in state {sm.record.state.value}")
             return None
@@ -150,7 +248,12 @@ class ApprovalService:
 
         logger.info(f"Approval {approval_id} approved by {approved_by}")
 
-        # TODO: Notify session service
+        await self._send_notification(
+            event="approval.approved",
+            record=sm.record,
+            actor=approved_by,
+            message=message,
+        )
 
         return sm.record
 
@@ -175,6 +278,14 @@ class ApprovalService:
             logger.error(f"Approval {approval_id} not found")
             return None
 
+        if not self._has_permission(rejected_by, Permission.APPROVAL_REJECT):
+            logger.error(f"User {rejected_by} lacks permission {Permission.APPROVAL_REJECT.value}")
+            return None
+
+        if not self.is_approver(sm.record, rejected_by):
+            logger.error(f"User {rejected_by} cannot reject approval {approval_id}")
+            return None
+
         if not sm.can_transition(ApprovalAction.REJECT):
             logger.error(f"Cannot reject approval {approval_id} in state {sm.record.state.value}")
             return None
@@ -192,7 +303,12 @@ class ApprovalService:
 
         logger.info(f"Approval {approval_id} rejected by {rejected_by}")
 
-        # TODO: Notify session service
+        await self._send_notification(
+            event="approval.rejected",
+            record=sm.record,
+            actor=rejected_by,
+            message=reason,
+        )
 
         return sm.record
 
@@ -216,6 +332,14 @@ class ApprovalService:
         if not sm:
             return None
 
+        if not self._has_permission(requested_by, Permission.APPROVAL_REJECT):
+            logger.error(f"User {requested_by} lacks permission {Permission.APPROVAL_REJECT.value}")
+            return None
+
+        if not self.is_approver(sm.record, requested_by):
+            logger.error(f"User {requested_by} cannot request changes for approval {approval_id}")
+            return None
+
         if not sm.can_transition(ApprovalAction.REQUEST_CHANGES):
             logger.error(
                 f"Cannot request changes for approval {approval_id} in state {sm.record.state.value}"
@@ -227,6 +351,154 @@ class ApprovalService:
         # Persist to database
         await self._save_to_db(sm)
 
+        logger.info(f"Approval {approval_id} requested changes by {requested_by}")
+        await self._send_notification(
+            event="approval.changes_requested",
+            record=sm.record,
+            actor=requested_by,
+            message=message,
+        )
+
+        return sm.record
+
+    async def claim(
+        self,
+        approval_id: UUID,
+        claimed_by: str,
+    ) -> ApprovalRecord | None:
+        """Claim an approval for review."""
+        sm = await self._load_to_cache(approval_id)
+        if not sm:
+            return None
+
+        if not self._has_permission(claimed_by, Permission.APPROVAL_APPROVE):
+            logger.error(f"User {claimed_by} lacks permission {Permission.APPROVAL_APPROVE.value}")
+            return None
+
+        if not self.is_approver(sm.record, claimed_by):
+            logger.error(f"User {claimed_by} cannot claim approval {approval_id}")
+            return None
+
+        if not sm.can_transition(ApprovalAction.CLAIM):
+            logger.error(f"Cannot claim approval {approval_id} in state {sm.record.state.value}")
+            return None
+
+        sm.claim(claimed_by)
+        await self._save_to_db(sm)
+        logger.info(f"Approval {approval_id} claimed by {claimed_by}")
+        await self._send_notification(
+            event="approval.claimed",
+            record=sm.record,
+            actor=claimed_by,
+        )
+        return sm.record
+
+    async def escalate(
+        self,
+        approval_id: UUID,
+        escalated_by: str,
+        reason: str = "",
+    ) -> ApprovalRecord | None:
+        """Escalate an approval request."""
+        sm = await self._load_to_cache(approval_id)
+        if not sm:
+            return None
+
+        if not self._has_permission(escalated_by, Permission.APPROVAL_APPROVE):
+            logger.error(f"User {escalated_by} lacks permission {Permission.APPROVAL_APPROVE.value}")
+            return None
+
+        if not self.is_approver(sm.record, escalated_by):
+            logger.error(f"User {escalated_by} cannot escalate approval {approval_id}")
+            return None
+
+        if not sm.can_transition(ApprovalAction.ESCALATE):
+            logger.error(f"Cannot escalate approval {approval_id} in state {sm.record.state.value}")
+            return None
+
+        sm.escalate(escalated_by, reason)
+        await self._save_to_db(sm)
+        logger.info(f"Approval {approval_id} escalated by {escalated_by}")
+        await self._send_notification(
+            event="approval.escalated",
+            record=sm.record,
+            actor=escalated_by,
+            message=reason,
+        )
+        return sm.record
+
+    async def cancel(
+        self,
+        approval_id: UUID,
+        cancelled_by: str,
+        reason: str = "",
+    ) -> ApprovalRecord | None:
+        """Cancel an approval request."""
+        sm = await self._load_to_cache(approval_id)
+        if not sm:
+            return None
+
+        if not self._has_permission(cancelled_by, Permission.APPROVAL_REJECT):
+            logger.error(f"User {cancelled_by} lacks permission {Permission.APPROVAL_REJECT.value}")
+            return None
+
+        if not self.can_cancel(sm.record, cancelled_by):
+            logger.error(f"User {cancelled_by} cannot cancel approval {approval_id}")
+            return None
+
+        if not sm.can_transition(ApprovalAction.CANCEL):
+            logger.error(f"Cannot cancel approval {approval_id} in state {sm.record.state.value}")
+            return None
+
+        sm.cancel(cancelled_by, reason)
+        await self._save_to_db(sm)
+        logger.info(f"Approval {approval_id} cancelled by {cancelled_by}")
+        await self._send_notification(
+            event="approval.cancelled",
+            record=sm.record,
+            actor=cancelled_by,
+            message=reason,
+        )
+        return sm.record
+
+    async def remind(
+        self,
+        approval_id: UUID,
+        reminded_by: str,
+        message: str = "",
+    ) -> ApprovalRecord | None:
+        """Send a reminder for a pending approval."""
+        sm = await self._load_to_cache(approval_id)
+        if not sm:
+            return None
+
+        if not self._has_permission(reminded_by, Permission.APPROVAL_READ):
+            logger.error(f"User {reminded_by} lacks permission {Permission.APPROVAL_READ.value}")
+            return None
+
+        if not self.is_approver(sm.record, reminded_by):
+            logger.error(f"User {reminded_by} cannot remind approval {approval_id}")
+            return None
+
+        if not sm.record.is_pending():
+            logger.error(f"Cannot remind approval {approval_id} in state {sm.record.state.value}")
+            return None
+
+        sm.record.add_history(
+            action=ApprovalAction.REMIND.value,
+            actor=reminded_by,
+            details={"message": message},
+        )
+        if message:
+            sm.record.add_comment(reminded_by, message, is_internal=True)
+        await self._save_to_db(sm)
+        logger.info(f"Approval {approval_id} reminder sent by {reminded_by}")
+        await self._send_notification(
+            event="approval.reminded",
+            record=sm.record,
+            actor=reminded_by,
+            message=message,
+        )
         return sm.record
 
     async def get_approval(self, approval_id: UUID) -> ApprovalRecord | None:
@@ -284,6 +556,18 @@ class ApprovalService:
             List of timed out records
         """
         timed_out = []
+        reminder_threshold_hours = 0.0
+        auto_escalate = False
+        auto_reject = False
+        try:
+            hitl_settings = get_settings().hitl
+            reminder_threshold_hours = max(float(hitl_settings.reminder_hours_before_timeout), 0.0)
+            auto_escalate = bool(hitl_settings.auto_escalate_on_timeout)
+            auto_reject = bool(hitl_settings.auto_reject_on_timeout)
+        except Exception:
+            reminder_threshold_hours = 0.0
+            auto_escalate = False
+            auto_reject = False
 
         # Get all pending approvals from DB
         async with self.database.session() as db_session:
@@ -292,16 +576,89 @@ class ApprovalService:
 
         for record in pending:
             sm = ApprovalStateMachine(record)
-            if sm.check_timeout():
-                timed_out.append(record)
-                # Persist timeout
+
+            remaining_hours = self._remaining_timeout_hours(sm.record)
+            reminder_sent = bool(sm.record.metadata.get("timeout_reminder_sent"))
+            if (
+                remaining_hours is not None
+                and 0 < remaining_hours <= reminder_threshold_hours
+                and not reminder_sent
+            ):
+                sm.record.metadata["timeout_reminder_sent"] = True
+                sm.record.add_history(
+                    action=ApprovalAction.REMIND.value,
+                    actor="system",
+                    details={
+                        "reason": "timeout_threshold",
+                        "hours_remaining": remaining_hours,
+                    },
+                )
+                await self._save_to_db(sm)
+                await self._send_notification(
+                    event="approval.timeout_reminder",
+                    record=sm.record,
+                    actor="system",
+                    message=f"Timeout in {remaining_hours:.2f} hours",
+                )
+
+            should_timeout = (
+                sm.record.timeout_at is not None
+                and datetime.utcnow() > sm.record.timeout_at
+                and sm.record.is_pending()
+            )
+            if not should_timeout:
+                continue
+
+            if auto_escalate and sm.can_transition(ApprovalAction.ESCALATE):
+                sm.escalate("system", "Timed out; auto-escalated")
+                timed_out.append(sm.record)
                 await self._save_to_db(sm)
                 get_metrics().record_approval(
                     approved=False,
                     timed_out=True,
-                    wait_time_hours=self._calculate_wait_hours(record.requested_at),
+                    wait_time_hours=self._calculate_wait_hours(sm.record.requested_at),
+                )
+                logger.warning(f"Approval {record.id} timed out and auto-escalated")
+                await self._send_notification(
+                    event="approval.auto_escalated",
+                    record=sm.record,
+                    actor="system",
+                    message="Timed out; auto-escalated",
+                )
+                continue
+
+            if auto_reject and sm.can_transition(ApprovalAction.REJECT):
+                sm.reject("system", "Timed out; auto-rejected")
+                timed_out.append(sm.record)
+                await self._save_to_db(sm)
+                get_metrics().record_approval(
+                    approved=False,
+                    timed_out=True,
+                    wait_time_hours=self._calculate_wait_hours(sm.record.requested_at),
+                )
+                logger.warning(f"Approval {record.id} timed out and auto-rejected")
+                await self._send_notification(
+                    event="approval.auto_rejected",
+                    record=sm.record,
+                    actor="system",
+                    message="Timed out; auto-rejected",
+                )
+                continue
+
+            if sm.check_timeout():
+                timed_out.append(sm.record)
+                await self._save_to_db(sm)
+                get_metrics().record_approval(
+                    approved=False,
+                    timed_out=True,
+                    wait_time_hours=self._calculate_wait_hours(sm.record.requested_at),
                 )
                 logger.warning(f"Approval {record.id} timed out")
+                await self._send_notification(
+                    event="approval.timed_out",
+                    record=sm.record,
+                    actor="system",
+                )
 
         return timed_out
 
@@ -327,10 +684,20 @@ class ApprovalService:
         if not sm:
             return None
 
+        if not self._has_permission(author, Permission.APPROVAL_READ):
+            logger.error(f"User {author} lacks permission {Permission.APPROVAL_READ.value}")
+            return None
+
         sm.record.add_comment(author, content, is_internal)
 
         # Persist to database
         await self._save_to_db(sm)
+        await self._send_notification(
+            event="approval.comment_added",
+            record=sm.record,
+            actor=author,
+            message=content,
+        )
 
         return sm.record
 
@@ -345,6 +712,7 @@ class ApprovalService:
             "session_id": str(record.session_id),
             "stage_name": record.stage_name,
             "state": record.state.value,
+            "approvers": record.metadata.get("approvers", []),
             "requested_by": record.requested_by,
             "requested_at": record.requested_at.isoformat(),
             "approved_by": record.approved_by,

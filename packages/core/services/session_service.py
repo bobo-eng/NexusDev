@@ -14,6 +14,7 @@ from core.config.settings import get_settings, load_sop_config
 from core.domain.session import Session, SessionStatus
 from core.domain.stage import Stage, StageStatus, StageType
 from core.observability.metrics import get_metrics
+from core.security.rbac import Permission, get_rbac
 from core.sop.sop_engine import SOPConfig, SOPEngine
 from core.storage.database import Database
 from core.storage.repository import SessionRepository, StageRepository
@@ -322,6 +323,7 @@ class SessionService:
                     requested_by="system",
                     request_message=f"Please review {stage.name} output",
                     timeout_hours=stage_def.approval_timeout_hours if stage_def else 24,
+                    approvers=stage_def.approvers if stage_def else None,
                 )
 
                 async with self.database.session() as db_session:
@@ -447,7 +449,13 @@ class SessionService:
         comment: str = "",
     ) -> dict[str, Any]:
         """Approve a pending stage."""
+        if not get_rbac().check_permission(approved_by, Permission.APPROVAL_APPROVE):
+            return {"error": f"Permission denied for user '{approved_by}' to approve stages"}
+
+        from core.services.approval_service import ApprovalService
+
         stage_name = ""
+        approval_service = ApprovalService(self.database)
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
@@ -468,6 +476,17 @@ class SessionService:
                     "error": f"Stage is not waiting for approval (status: {stage.status.value})"
                 }
 
+            approvals = await approval_service.get_stage_approvals(stage_id)
+            pending = next((approval for approval in approvals if approval.is_pending()), None)
+            if pending:
+                if not approval_service.is_approver(pending, approved_by):
+                    return {
+                        "error": f"User '{approved_by}' is not allowed to approve this stage"
+                    }
+                approval_result = await approval_service.approve(pending.id, approved_by, comment)
+                if not approval_result:
+                    return {"error": f"Approval record {pending.id} cannot be approved"}
+
             # Approve stage
             stage.approve(approved_by, comment)
             await stage_repo.update(stage)
@@ -477,14 +496,6 @@ class SessionService:
             self._mark_stage_completed(session, stage.id)
             session.mark_approved()
             await session_repo.update(session)
-
-        from core.services.approval_service import ApprovalService
-
-        approval_service = ApprovalService(self.database)
-        approvals = await approval_service.get_stage_approvals(stage_id)
-        pending = next((approval for approval in approvals if approval.is_pending()), None)
-        if pending:
-            await approval_service.approve(pending.id, approved_by, comment)
 
         logger.info(
             f"[Session {session_id}] Stage {stage_name or stage_id} approved by {approved_by}"
@@ -518,7 +529,13 @@ class SessionService:
         reason: str = "",
     ) -> dict[str, Any]:
         """Reject a pending stage."""
+        if not get_rbac().check_permission(rejected_by, Permission.APPROVAL_REJECT):
+            return {"error": f"Permission denied for user '{rejected_by}' to reject stages"}
+
+        from core.services.approval_service import ApprovalService
+
         stage_name = ""
+        approval_service = ApprovalService(self.database)
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
@@ -539,6 +556,17 @@ class SessionService:
                     "error": f"Stage is not waiting for approval (status: {stage.status.value})"
                 }
 
+            approvals = await approval_service.get_stage_approvals(stage_id)
+            pending = next((approval for approval in approvals if approval.is_pending()), None)
+            if pending:
+                if not approval_service.is_approver(pending, rejected_by):
+                    return {
+                        "error": f"User '{rejected_by}' is not allowed to reject this stage"
+                    }
+                rejection_result = await approval_service.reject(pending.id, rejected_by, reason)
+                if not rejection_result:
+                    return {"error": f"Approval record {pending.id} cannot be rejected"}
+
             # Reject stage
             stage.reject(rejected_by, reason)
             await stage_repo.update(stage)
@@ -547,14 +575,6 @@ class SessionService:
             # Update session
             session.mark_rejected()
             await session_repo.update(session)
-
-        from core.services.approval_service import ApprovalService
-
-        approval_service = ApprovalService(self.database)
-        approvals = await approval_service.get_stage_approvals(stage_id)
-        pending = next((approval for approval in approvals if approval.is_pending()), None)
-        if pending:
-            await approval_service.reject(pending.id, rejected_by, reason)
 
         logger.info(
             f"[Session {session_id}] Stage {stage_name or stage_id} rejected by {rejected_by}"

@@ -5,6 +5,7 @@ Defines:
 - Permissions: create, read, update, delete, approve, reject
 """
 
+import os
 from collections.abc import Callable
 from enum import StrEnum
 from functools import wraps
@@ -98,7 +99,66 @@ class RBAC:
     """Role-Based Access Control manager."""
 
     def __init__(self):
-        self._user_roles: dict[str, str] = {}  # user_id -> role_name
+        self._user_roles: dict[str, str] = {}  # user_id -> role_name (runtime assignments)
+        self._env_user_roles: dict[str, str] = {}  # user_id -> role_name (from env)
+        self.enabled = True
+        self.default_role = "tech_lead"
+        self.configure_from_env()
+
+    @staticmethod
+    def _normalize_user(user_id: str) -> str:
+        """Normalize user identifier for lookups."""
+        return user_id.strip().lower()
+
+    @staticmethod
+    def _parse_bool(value: str | None, default: bool) -> bool:
+        """Parse boolean env values."""
+        if value is None:
+            return default
+
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+        return default
+
+    def configure_from_env(self) -> None:
+        """Load RBAC settings from environment."""
+        self.enabled = self._parse_bool(os.getenv("RBAC_ENABLED"), default=True)
+
+        configured_default = self._normalize_user(os.getenv("RBAC_DEFAULT_ROLE", "tech_lead"))
+        self.default_role = configured_default if configured_default in ROLES else "tech_lead"
+
+        mapping = os.getenv("RBAC_USER_ROLES", "")
+        parsed: dict[str, str] = {}
+        for item in mapping.split(","):
+            item = item.strip()
+            if not item or ":" not in item:
+                continue
+            user_id, role_name = item.split(":", 1)
+            user_key = self._normalize_user(user_id)
+            role_key = self._normalize_user(role_name)
+            if user_key and role_key in ROLES:
+                parsed[user_key] = role_key
+        self._env_user_roles = parsed
+
+    def _resolve_role_name(self, user_id: str) -> str | None:
+        """Resolve role name by runtime mapping, env mapping, or default."""
+        if not user_id:
+            return None
+
+        user_key = self._normalize_user(user_id)
+
+        role_name = self._user_roles.get(user_key)
+        if role_name is None:
+            role_name = self._env_user_roles.get(user_key)
+        if role_name is None and user_key in ROLES:
+            role_name = user_key
+        if role_name is None:
+            role_name = self.default_role
+
+        return role_name if role_name in ROLES else None
 
     def assign_role(self, user_id: str, role_name: str) -> None:
         """Assign role to user.
@@ -110,9 +170,10 @@ class RBAC:
         Raises:
             ValueError: If role doesn't exist
         """
-        if role_name not in ROLES:
+        role_key = self._normalize_user(role_name)
+        if role_key not in ROLES:
             raise ValueError(f"Unknown role: {role_name}")
-        self._user_roles[user_id] = role_name
+        self._user_roles[self._normalize_user(user_id)] = role_key
 
     def get_user_role(self, user_id: str) -> Role | None:
         """Get user's role.
@@ -123,7 +184,7 @@ class RBAC:
         Returns:
             Role or None
         """
-        role_name = self._user_roles.get(user_id)
+        role_name = self._resolve_role_name(user_id)
         return ROLES[role_name] if role_name else None
 
     def check_permission(self, user_id: str, permission: Permission) -> bool:
@@ -136,6 +197,9 @@ class RBAC:
         Returns:
             True if user has permission
         """
+        if not self.enabled:
+            return True
+
         role = self.get_user_role(user_id)
         if not role:
             return False
@@ -189,4 +253,5 @@ _rbac = RBAC()
 
 def get_rbac() -> RBAC:
     """Get global RBAC instance."""
+    _rbac.configure_from_env()
     return _rbac

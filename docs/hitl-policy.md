@@ -84,16 +84,25 @@ stages:
       - senior_developer
 ```
 
+`approvers` is now enforced in runtime approval actions. When an allowlist exists,
+only listed actors can claim/approve/reject/request-changes/escalate/remind.
+
 ### Timeout Handling
 
 Current behavior:
 1. Worker periodically checks pending approvals for timeout
 2. Timed-out requests are marked `TIMED_OUT`
+3. Notification events are emitted (log + optional webhook via `HITL_WEBHOOK_URL`)
 
 Planned enhancements:
-1. Reminder notifications before timeout
-2. Auto-escalation policies by role/level
-3. Optional auto-rejection strategy
+1. Multi-channel notifications (email/dashboard)
+2. Advanced escalation policies by role/level
+3. Rich timeout analytics
+
+Current timeout controls (env):
+- `HITL_REMINDER_HOURS_BEFORE_TIMEOUT`
+- `HITL_AUTO_ESCALATE_ON_TIMEOUT`
+- `HITL_AUTO_REJECT_ON_TIMEOUT`
 
 ## Approval Workflow
 
@@ -116,9 +125,9 @@ approval = await approval_service.create_approval(
 ### 2. Notification
 
 Approvers are notified via:
-- API/Webhook
-- Email (if configured)
-- Dashboard notification
+- Event log (always when enabled)
+- Webhook (`HITL_WEBHOOK_URL`, if configured)
+- Email / Dashboard (planned)
 
 ### 3. Review
 
@@ -244,9 +253,16 @@ All approval actions are logged:
 ## Security
 
 1. **Authentication**: Approvers must be authenticated
-2. **Authorization**: Check approver permissions
+2. **Authorization**: Check approver permissions (RBAC + SOP approver allowlist)
 3. **Non-repudiation**: Actions are logged with user ID
 4. **Audit**: All actions are auditable
+
+RBAC runtime controls:
+- `RBAC_ENABLED=true|false`
+- `RBAC_DEFAULT_ROLE=<role>`
+- `RBAC_USER_ROLES=user1:role1,user2:role2`
+
+When RBAC denies an action, API returns `403`.
 
 ## Customization
 
@@ -293,6 +309,50 @@ POST /approvals/{approval_id}/comments
 {
     "author": "tech_lead",
     "content": "Consider adding caching"
+}
+```
+
+### Claim
+```
+POST /approvals/{approval_id}/claim
+{
+    "user": "tech_lead"
+}
+```
+
+### Request Changes
+```
+POST /approvals/{approval_id}/request-changes
+{
+    "user": "tech_lead",
+    "message": "Please update API contracts"
+}
+```
+
+### Escalate
+```
+POST /approvals/{approval_id}/escalate
+{
+    "user": "tech_lead",
+    "reason": "Cross-team decision required"
+}
+```
+
+### Cancel
+```
+POST /approvals/{approval_id}/cancel
+{
+    "user": "requester",
+    "reason": "Superseded by newer design"
+}
+```
+
+### Remind
+```
+POST /approvals/{approval_id}/remind
+{
+    "user": "tech_lead",
+    "message": "Reminder: approval is due today"
 }
 ```
 

@@ -15,6 +15,7 @@ from uuid import UUID
 import os
 
 from core.domain.session import SessionStatus
+from core.security.rbac import Permission, get_rbac
 from core.services.approval_service import ApprovalService
 from core.services.session_service import SessionService
 from core.storage.database import Database, create_database
@@ -72,6 +73,22 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    def _ensure_permission(user: str, permission: Permission) -> None:
+        """Ensure user has required permission."""
+        if not get_rbac().check_permission(user, permission):
+            raise HTTPException(
+                status_code=403,
+                detail=f"User '{user}' lacks permission '{permission.value}'",
+            )
+
+    def _raise_service_error(detail: str) -> None:
+        """Map service error messages to HTTP responses."""
+        lowered = detail.lower()
+        status_code = 400
+        if "permission denied" in lowered or "not allowed" in lowered:
+            status_code = 403
+        raise HTTPException(status_code=status_code, detail=detail)
+
     # Request/Response models
     class CreateSessionRequest(BaseModel):
         name: str = Field(..., min_length=1, max_length=200)
@@ -96,6 +113,25 @@ def create_app() -> FastAPI:
     class RejectionRequest(BaseModel):
         reason: str
         user: str = "api-user"
+
+    class ClaimRequest(BaseModel):
+        user: str = "api-user"
+
+    class RequestChangesRequest(BaseModel):
+        user: str = "api-user"
+        message: str = ""
+
+    class EscalationRequest(BaseModel):
+        user: str = "api-user"
+        reason: str = ""
+
+    class CancelRequest(BaseModel):
+        user: str = "api-user"
+        reason: str = ""
+
+    class RemindRequest(BaseModel):
+        user: str = "api-user"
+        message: str = ""
 
     class AddCommentRequest(BaseModel):
         author: str = "api-user"
@@ -122,6 +158,8 @@ def create_app() -> FastAPI:
         service: SessionServiceDep,
     ):
         """Create a new development session."""
+        _ensure_permission(request.created_by, Permission.SESSION_CREATE)
+
         session = await service.create_session(
             name=request.name,
             requirement=request.requirement,
@@ -238,6 +276,8 @@ def create_app() -> FastAPI:
         service: SessionServiceDep,
     ):
         """Approve a pending stage."""
+        _ensure_permission(request.user, Permission.APPROVAL_APPROVE)
+
         try:
             session_uuid = UUID(session_id)
             stage_uuid = UUID(stage_id)
@@ -252,7 +292,7 @@ def create_app() -> FastAPI:
         )
 
         if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
+            _raise_service_error(result["error"])
 
         return result
 
@@ -264,6 +304,8 @@ def create_app() -> FastAPI:
         service: SessionServiceDep,
     ):
         """Reject a pending stage."""
+        _ensure_permission(request.user, Permission.APPROVAL_REJECT)
+
         try:
             session_uuid = UUID(session_id)
             stage_uuid = UUID(stage_id)
@@ -278,7 +320,7 @@ def create_app() -> FastAPI:
         )
 
         if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
+            _raise_service_error(result["error"])
 
         return result
 
@@ -286,10 +328,13 @@ def create_app() -> FastAPI:
     @app.get("/approvals")
     async def list_approvals(
         session_id: str | None = None,
+        user: str = "api-user",
         *,
         service: ApprovalServiceDep,
     ):
         """List pending approvals."""
+        _ensure_permission(user, Permission.APPROVAL_READ)
+
         session_uuid = None
         if session_id:
             try:
@@ -314,9 +359,13 @@ def create_app() -> FastAPI:
     @app.get("/approvals/{approval_id}")
     async def get_approval(
         approval_id: str,
+        user: str = "api-user",
+        *,
         service: ApprovalServiceDep,
     ):
         """Get approval details."""
+        _ensure_permission(user, Permission.APPROVAL_READ)
+
         try:
             uuid = UUID(approval_id)
         except ValueError:
@@ -327,6 +376,201 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Approval not found")
 
         return summary
+
+    @app.post("/approvals/{approval_id}/claim")
+    async def claim_approval(
+        approval_id: str,
+        request: ClaimRequest,
+        service: ApprovalServiceDep,
+    ):
+        """Claim an approval for review."""
+        try:
+            uuid = UUID(approval_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
+
+        approval = await service.get_approval(uuid)
+        if not approval:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        _ensure_permission(request.user, Permission.APPROVAL_APPROVE)
+        if not service.is_approver(approval, request.user):
+            raise HTTPException(status_code=403, detail="User is not allowed to claim this approval")
+
+        updated = await service.claim(
+            approval_id=uuid,
+            claimed_by=request.user,
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot claim approval in state '{approval.state.value}'",
+            )
+
+        return {
+            "id": approval_id,
+            "state": updated.state.value,
+            "claimed_by": request.user,
+        }
+
+    @app.post("/approvals/{approval_id}/request-changes")
+    async def request_approval_changes(
+        approval_id: str,
+        request: RequestChangesRequest,
+        service: ApprovalServiceDep,
+    ):
+        """Request changes and send approval back to pending."""
+        try:
+            uuid = UUID(approval_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
+
+        approval = await service.get_approval(uuid)
+        if not approval:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        _ensure_permission(request.user, Permission.APPROVAL_REJECT)
+        if not service.is_approver(approval, request.user):
+            raise HTTPException(
+                status_code=403,
+                detail="User is not allowed to request changes for this approval",
+            )
+
+        updated = await service.request_changes(
+            approval_id=uuid,
+            requested_by=request.user,
+            message=request.message,
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot request changes in state '{approval.state.value}'",
+            )
+
+        return {
+            "id": approval_id,
+            "state": updated.state.value,
+            "requested_by": request.user,
+            "message": request.message,
+        }
+
+    @app.post("/approvals/{approval_id}/escalate")
+    async def escalate_approval(
+        approval_id: str,
+        request: EscalationRequest,
+        service: ApprovalServiceDep,
+    ):
+        """Escalate an approval."""
+        try:
+            uuid = UUID(approval_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
+
+        approval = await service.get_approval(uuid)
+        if not approval:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        _ensure_permission(request.user, Permission.APPROVAL_APPROVE)
+        if not service.is_approver(approval, request.user):
+            raise HTTPException(
+                status_code=403,
+                detail="User is not allowed to escalate this approval",
+            )
+
+        updated = await service.escalate(
+            approval_id=uuid,
+            escalated_by=request.user,
+            reason=request.reason,
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot escalate approval in state '{approval.state.value}'",
+            )
+
+        return {
+            "id": approval_id,
+            "state": updated.state.value,
+            "escalated_by": request.user,
+            "reason": request.reason,
+        }
+
+    @app.post("/approvals/{approval_id}/cancel")
+    async def cancel_approval(
+        approval_id: str,
+        request: CancelRequest,
+        service: ApprovalServiceDep,
+    ):
+        """Cancel an approval."""
+        try:
+            uuid = UUID(approval_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
+
+        approval = await service.get_approval(uuid)
+        if not approval:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        _ensure_permission(request.user, Permission.APPROVAL_REJECT)
+        if not service.can_cancel(approval, request.user):
+            raise HTTPException(
+                status_code=403,
+                detail="User is not allowed to cancel this approval",
+            )
+
+        updated = await service.cancel(
+            approval_id=uuid,
+            cancelled_by=request.user,
+            reason=request.reason,
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot cancel approval in state '{approval.state.value}'",
+            )
+
+        return {
+            "id": approval_id,
+            "state": updated.state.value,
+            "cancelled_by": request.user,
+            "reason": request.reason,
+        }
+
+    @app.post("/approvals/{approval_id}/remind")
+    async def remind_approval(
+        approval_id: str,
+        request: RemindRequest,
+        service: ApprovalServiceDep,
+    ):
+        """Send reminder for a pending approval."""
+        try:
+            uuid = UUID(approval_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
+
+        approval = await service.get_approval(uuid)
+        if not approval:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        _ensure_permission(request.user, Permission.APPROVAL_READ)
+        if not service.is_approver(approval, request.user):
+            raise HTTPException(
+                status_code=403,
+                detail="User is not allowed to send reminders for this approval",
+            )
+
+        updated = await service.remind(
+            approval_id=uuid,
+            reminded_by=request.user,
+            message=request.message,
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot remind approval in state '{approval.state.value}'",
+            )
+
+        return {
+            "id": approval_id,
+            "state": updated.state.value,
+            "reminded_by": request.user,
+            "message": request.message,
+        }
 
     @app.post("/approvals/{approval_id}/approve")
     async def approve(
@@ -344,6 +588,9 @@ def create_app() -> FastAPI:
         approval = await approval_service.get_approval(uuid)
         if not approval:
             raise HTTPException(status_code=404, detail="Approval not found")
+        _ensure_permission(request.user, Permission.APPROVAL_APPROVE)
+        if not approval_service.is_approver(approval, request.user):
+            raise HTTPException(status_code=403, detail="User is not allowed to approve this request")
 
         result = await session_service.approve_stage(
             approval.session_id,
@@ -352,7 +599,7 @@ def create_app() -> FastAPI:
             request.message,
         )
         if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
+            _raise_service_error(result["error"])
 
         updated = await approval_service.get_approval(uuid)
         return {
@@ -377,6 +624,9 @@ def create_app() -> FastAPI:
         approval = await approval_service.get_approval(uuid)
         if not approval:
             raise HTTPException(status_code=404, detail="Approval not found")
+        _ensure_permission(request.user, Permission.APPROVAL_REJECT)
+        if not approval_service.is_approver(approval, request.user):
+            raise HTTPException(status_code=403, detail="User is not allowed to reject this request")
 
         result = await session_service.reject_stage(
             approval.session_id,
@@ -385,7 +635,7 @@ def create_app() -> FastAPI:
             request.reason,
         )
         if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
+            _raise_service_error(result["error"])
 
         updated = await approval_service.get_approval(uuid)
         return {
@@ -401,6 +651,8 @@ def create_app() -> FastAPI:
         service: ApprovalServiceDep,
     ):
         """Add comment to an approval."""
+        _ensure_permission(request.author, Permission.APPROVAL_READ)
+
         try:
             uuid = UUID(approval_id)
         except ValueError:

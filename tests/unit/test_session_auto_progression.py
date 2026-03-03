@@ -112,3 +112,50 @@ async def test_approve_stage_auto_advances_when_enabled(
     stage_types = [stage["type"] for stage in status["stages"]]
     assert stage_types == ["requirement_analysis", "system_design", "coding"]
     assert status["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_approve_stage_rejects_non_approver(
+    session_service: SessionService,
+    patch_agent_execution,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("HITL_AUTO_ADVANCE_AFTER_APPROVAL", raising=False)
+    session_id, stage_id = await _setup_waiting_approval_session(session_service)
+
+    result = await session_service.approve_stage(
+        session_id=session_id,
+        stage_id=stage_id,
+        approved_by="outsider",
+        comment="try approve",
+    )
+
+    assert "error" in result
+    assert "not allowed to approve" in result["error"]
+
+    status = await session_service.get_status(session_id)
+    assert status["status"] == "waiting_approval"
+
+
+@pytest.mark.asyncio
+async def test_approve_stage_rejects_user_without_rbac_permission(
+    session_service: SessionService,
+    patch_agent_execution,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("RBAC_ENABLED", "true")
+    monkeypatch.setenv("RBAC_DEFAULT_ROLE", "viewer")
+    monkeypatch.setenv("RBAC_USER_ROLES", "tech_lead:developer,system:admin")
+    monkeypatch.delenv("HITL_AUTO_ADVANCE_AFTER_APPROVAL", raising=False)
+
+    session_id, stage_id = await _setup_waiting_approval_session(session_service)
+
+    result = await session_service.approve_stage(
+        session_id=session_id,
+        stage_id=stage_id,
+        approved_by="tech_lead",
+        comment="try approve",
+    )
+
+    assert "error" in result
+    assert "Permission denied" in result["error"]

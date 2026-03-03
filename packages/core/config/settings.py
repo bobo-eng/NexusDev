@@ -73,6 +73,9 @@ class HITLSettings(BaseSettings):
     default_timeout_hours: int = 24
     enable_notifications: bool = False
     auto_advance_after_approval: bool = False
+    reminder_hours_before_timeout: int = 1
+    auto_escalate_on_timeout: bool = False
+    auto_reject_on_timeout: bool = False
 
 
 class SOPSettings(BaseSettings):
