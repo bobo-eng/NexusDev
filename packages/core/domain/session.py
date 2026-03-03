@@ -1,14 +1,14 @@
 """Session entity representing a development workflow instance."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Self
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class SessionStatus(str, Enum):
+class SessionStatus(StrEnum):
     """Session lifecycle states."""
 
     CREATED = "created"

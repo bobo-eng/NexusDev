@@ -1,14 +1,14 @@
 """Stage entity representing a workflow phase."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Self
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class StageType(str, Enum):
+class StageType(StrEnum):
     """Predefined stage types in the development workflow."""
 
     REQUIREMENT_ANALYSIS = "requirement_analysis"
@@ -19,7 +19,7 @@ class StageType(str, Enum):
     DEPLOYMENT = "deployment"
 
 
-class StageStatus(str, Enum):
+class StageStatus(StrEnum):
     """Stage lifecycle states."""
 
     PENDING = "pending"

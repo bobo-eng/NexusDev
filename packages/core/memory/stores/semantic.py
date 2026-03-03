@@ -2,15 +2,15 @@
 
 from uuid import UUID
 
+from core.memory.retrieval.vector import VectorStore
 from core.memory.types import MemoryEntry, MemoryQuery, MemoryScope, MemoryType
+from core.storage.database import Database
 
 
 class SemanticMemoryStore:
     """Store for semantic memory (knowledge base)."""
 
-    def __init__(
-        self, database: "Database | None" = None, vector_store: "VectorStore | None" = None
-    ):
+    def __init__(self, database: Database | None = None, vector_store: VectorStore | None = None):
         self.database = database
         self.vector_store = vector_store
 

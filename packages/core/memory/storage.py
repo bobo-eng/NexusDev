@@ -8,6 +8,7 @@ from sqlalchemy import JSON, DateTime, Float, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.memory.types import MemoryEntry
 from core.storage.database import Base
 
 
@@ -43,9 +44,6 @@ class MemoryEntryModel(Base):
 
     feedback_positive: Mapped[bool | None] = mapped_column(nullable=True)
     feedback_notes: Mapped[str] = mapped_column(Text, default="")
-
-
-from core.memory.types import MemoryEntry
 
 
 class MemoryRepository:

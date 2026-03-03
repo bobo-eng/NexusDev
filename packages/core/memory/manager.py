@@ -24,6 +24,7 @@ from core.memory.types import (
     MemoryScope,
     MemoryType,
 )
+from core.storage.database import Database
 
 
 class MemoryManager:
@@ -38,7 +39,7 @@ class MemoryManager:
 
     def __init__(
         self,
-        database: "Database | None" = None,
+        database: Database | None = None,
         vector_store: VectorStore | None = None,
         graph_store: GraphStore | None = None,
     ):
@@ -439,7 +440,7 @@ _memory_manager: MemoryManager | None = None
 
 
 def get_memory_manager(
-    database: "Database | None" = None,
+    database: Database | None = None,
     vector_store: VectorStore | None = None,
     graph_store: GraphStore | None = None,
 ) -> MemoryManager:

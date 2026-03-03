@@ -9,12 +9,12 @@ Manages human approval workflow:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
 
-class ApprovalState(str, Enum):
+class ApprovalState(StrEnum):
     """States in the approval state machine."""
 
     PENDING = "pending"  # Waiting for approval
@@ -26,7 +26,7 @@ class ApprovalState(str, Enum):
     CANCELLED = "cancelled"  # Approval request cancelled
 
 
-class ApprovalAction(str, Enum):
+class ApprovalAction(StrEnum):
     """Actions that can be taken on an approval."""
 
     SUBMIT = "submit"  # Submit for approval

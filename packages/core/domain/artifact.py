@@ -1,14 +1,14 @@
 """Artifact entity representing workflow outputs."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ArtifactType(str, Enum):
+class ArtifactType(StrEnum):
     """Types of artifacts produced during development."""
 
     # Requirements

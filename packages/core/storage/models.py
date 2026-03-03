@@ -1,7 +1,7 @@
 """SQLAlchemy models for database tables."""
 
+import uuid
 from datetime import datetime
-from uuid import UUID as PyUUID
 
 from sqlalchemy import (
     JSON,
@@ -12,7 +12,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from core.storage.database import Base
@@ -23,8 +23,8 @@ class SessionModel(Base):
 
     __tablename__ = "sessions"
 
-    id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         primary_key=True,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -34,8 +34,8 @@ class SessionModel(Base):
     requirement: Mapped[str] = mapped_column(Text, nullable=False)
     context: Mapped[dict] = mapped_column(JSON, default=dict)
 
-    current_stage_id: Mapped[PyUUID | None] = mapped_column(
-        UUID(as_uuid=True),
+    current_stage_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=True,
     )
     completed_stages: Mapped[list] = mapped_column(JSON, default=list)
@@ -73,12 +73,12 @@ class StageModel(Base):
 
     __tablename__ = "stages"
 
-    id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         primary_key=True,
     )
-    session_id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         ForeignKey("sessions.id"),
         nullable=False,
     )
@@ -120,17 +120,17 @@ class ArtifactModel(Base):
 
     __tablename__ = "artifacts"
 
-    id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         primary_key=True,
     )
-    session_id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         ForeignKey("sessions.id"),
         nullable=False,
     )
-    stage_id: Mapped[PyUUID | None] = mapped_column(
-        UUID(as_uuid=True),
+    stage_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=True,
     )
 
@@ -149,8 +149,8 @@ class ArtifactModel(Base):
     meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
     version: Mapped[int] = mapped_column(Integer, default=1)
-    previous_version_id: Mapped[PyUUID | None] = mapped_column(
-        UUID(as_uuid=True),
+    previous_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=True,
     )
 
@@ -177,16 +177,16 @@ class ReviewModel(Base):
 
     __tablename__ = "reviews"
 
-    id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         primary_key=True,
     )
-    session_id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=False,
     )
-    stage_id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    stage_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=False,
     )
     artifact_ids: Mapped[list] = mapped_column(JSON, default=list)
@@ -220,16 +220,16 @@ class ApprovalRecordModel(Base):
 
     __tablename__ = "approval_records"
 
-    id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         primary_key=True,
     )
-    session_id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=False,
     )
-    stage_id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True),
+    stage_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         nullable=False,
     )
     stage_name: Mapped[str] = mapped_column(String(100), nullable=False)

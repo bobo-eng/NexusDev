@@ -125,7 +125,7 @@ class SimpleGraphStore(GraphStore):
         levels = [[self._nodes[start_id]]]
         current_level = [start_id]
 
-        for depth in range(max_depth):
+        for _depth in range(max_depth):
             next_level = []
             next_nodes = []
 

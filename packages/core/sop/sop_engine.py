@@ -8,13 +8,13 @@ Inspired by MetaGPT's SOP concept, this engine defines:
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import yaml
 
 
-class StageAction(str, Enum):
+class StageAction(StrEnum):
     """Actions that can be performed on a stage."""
 
     START = "start"
@@ -221,11 +221,7 @@ class SOPEngine:
             return False
 
         # Check required inputs
-        for required in stage.required_inputs:
-            if required not in completed_stages:
-                return False
-
-        return True
+        return all(required in completed_stages for required in stage.required_inputs)
 
     def get_next_action(
         self,
@@ -316,11 +312,7 @@ class SOPEngine:
         # Check sequential order
         from_idx = self.config.get_stage_index(from_stage)
         to_idx = self.config.get_stage_index(to_stage)
-
-        if from_idx >= 0 and to_idx == from_idx + 1:
-            return True
-
-        return False
+        return bool(from_idx >= 0 and to_idx == from_idx + 1)
 
     def get_stage_sequence(self) -> list[str]:
         """Get ordered list of stage names."""

@@ -5,7 +5,7 @@ requirement -> design -> [HITL] -> coding -> review -> testing
 """
 
 from datetime import datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID
 
 from langgraph.graph import END, StateGraph
@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field
 
 from core.domain.session import SessionStatus
 from core.domain.stage import StageStatus
+
+if TYPE_CHECKING:
+    from core.sop.sop_engine import SOPEngine
 
 
 class DevelopmentState(BaseModel):

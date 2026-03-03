@@ -500,8 +500,6 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         if not model:
             return None
 
-        from uuid import UUID as PyUUID
-
         state = (
             ApprovalState(model.state)
             if model.state in ApprovalState._value2member_map_
@@ -509,11 +507,11 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
 
         record = ApprovalRecord(
-            id=PyUUID(str(model.id)),
-            session_id=PyUUID(str(model.session_id)),
-            stage_id=PyUUID(str(model.stage_id)),
+            id=UUID(str(model.id)),
+            session_id=UUID(str(model.session_id)),
+            stage_id=UUID(str(model.stage_id)),
             stage_name=model.stage_name,
-            artifact_ids=[PyUUID(str(a)) for a in model.artifact_ids],
+            artifact_ids=[UUID(str(a)) for a in model.artifact_ids],
             state=state,
             requested_by=model.requested_by,
             requested_at=model.requested_at,
@@ -561,7 +559,6 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
     def _deserialize_comments(self, comments: list[dict]) -> list[ApprovalComment]:
         """Deserialize approval comments from database format."""
         from datetime import datetime
-        from uuid import UUID as PyUUID
         from uuid import uuid4
 
         deserialized: list[ApprovalComment] = []
@@ -581,7 +578,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
                     created_at = datetime.utcnow()
 
             comment_id = comment.get("id")
-            parsed_id = PyUUID(str(comment_id)) if comment_id else uuid4()
+            parsed_id = UUID(str(comment_id)) if comment_id else uuid4()
 
             deserialized.append(
                 ApprovalComment(

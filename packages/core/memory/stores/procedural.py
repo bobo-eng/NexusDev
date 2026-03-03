@@ -9,13 +9,14 @@ that agents can follow. It includes:
 
 from uuid import UUID
 
-from core.memory.types import MemoryEntry, MemoryQuery, MemoryScope, MemoryType
+from core.memory.types import MemoryEntry, MemoryScope, MemoryType
+from core.storage.database import Database
 
 
 class ProceduralMemoryStore:
     """Store for procedural memory (SOPs and workflows)."""
 
-    def __init__(self, database: "Database | None" = None):
+    def __init__(self, database: Database | None = None):
         self.database = database
         self._sop_cache: dict[str, dict] = {}  # name -> SOP definition
 
@@ -53,12 +54,6 @@ class ProceduralMemoryStore:
         if sop_name in self._sop_cache:
             return self._sop_cache[sop_name]
 
-        # Query from storage
-        query = MemoryQuery(
-            tags=["sop", sop_name],
-            limit=1,
-        )
-
         if self.database:
             async with self.database.session() as db_session:
                 from core.memory.storage import MemoryRepository
@@ -74,11 +69,6 @@ class ProceduralMemoryStore:
 
     async def list_sops(self) -> list[dict]:
         """List all available SOPs."""
-        query = MemoryQuery(
-            tags=["sop"],
-            limit=100,
-        )
-
         results = []
         if self.database:
             async with self.database.session() as db_session:
@@ -127,11 +117,6 @@ class ProceduralMemoryStore:
 
     async def get_workflow_template(self, template_name: str) -> dict | None:
         """Get workflow template by name."""
-        query = MemoryQuery(
-            tags=["workflow_template", template_name],
-            limit=1,
-        )
-
         if self.database:
             async with self.database.session() as db_session:
                 from core.memory.storage import MemoryRepository

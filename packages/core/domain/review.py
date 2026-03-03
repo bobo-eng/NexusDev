@@ -1,14 +1,14 @@
 """Review entity representing code/design review outcomes."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ReviewType(str, Enum):
+class ReviewType(StrEnum):
     """Types of reviews in the workflow."""
 
     DESIGN_REVIEW = "design_review"
@@ -18,7 +18,7 @@ class ReviewType(str, Enum):
     PERFORMANCE_REVIEW = "performance_review"
 
 
-class ReviewStatus(str, Enum):
+class ReviewStatus(StrEnum):
     """Review outcome states."""
 
     PENDING = "pending"

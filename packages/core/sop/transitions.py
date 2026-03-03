@@ -2,11 +2,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from core.sop.sop_engine import SOPConfig
 
 
-class TransitionCondition(str, Enum):
+class TransitionCondition(StrEnum):
     """Predefined transition conditions."""
 
     ALWAYS = "always"

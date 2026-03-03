@@ -275,16 +275,15 @@ class BaseAgent(ABC):
             error_type = err.get("type", "")
 
             # Handle missing required fields
-            if "missing" in error_type:
-                if field_path:
-                    field_name = field_path[-1]
-                    # Set default based on field name patterns
-                    if "list" in str(err.get("input", "")).lower():
-                        fixed[field_name] = []
-                    elif "dict" in str(err.get("input", "")).lower():
-                        fixed[field_name] = {}
-                    else:
-                        fixed[field_name] = ""
+            if "missing" in error_type and field_path:
+                field_name = field_path[-1]
+                # Set default based on field name patterns
+                if "list" in str(err.get("input", "")).lower():
+                    fixed[field_name] = []
+                elif "dict" in str(err.get("input", "")).lower():
+                    fixed[field_name] = {}
+                else:
+                    fixed[field_name] = ""
 
         return fixed if fixed != data else None
 

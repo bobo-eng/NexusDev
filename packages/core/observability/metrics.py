@@ -181,6 +181,11 @@ def get_metrics() -> MetricsCollector:
     return _metrics
 
 
+def _record_timing(name: str, elapsed_ms: float, success: bool) -> None:
+    """Placeholder for decorator timing sink."""
+    del name, elapsed_ms, success
+
+
 def timed(metric_name: str | None = None):
     """Decorator to time function execution.
 
@@ -194,31 +199,32 @@ def timed(metric_name: str | None = None):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             start = time.time()
+            success = False
             try:
                 result = await func(*args, **kwargs)
                 success = True
                 return result
-            except Exception:
-                success = False
-                raise
             finally:
-                elapsed_ms = (time.time() - start) * 1000
-                name = metric_name or func.__name__
-                # Could emit to metrics system here
+                _record_timing(
+                    name=metric_name or func.__name__,
+                    elapsed_ms=(time.time() - start) * 1000,
+                    success=success,
+                )
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             start = time.time()
+            success = False
             try:
                 result = func(*args, **kwargs)
                 success = True
                 return result
-            except Exception:
-                success = False
-                raise
             finally:
-                elapsed_ms = (time.time() - start) * 1000
-                name = metric_name or func.__name__
+                _record_timing(
+                    name=metric_name or func.__name__,
+                    elapsed_ms=(time.time() - start) * 1000,
+                    success=success,
+                )
 
         return async_wrapper if func.__code__.co_flags & 0x80 else sync_wrapper
 

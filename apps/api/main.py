@@ -9,6 +9,7 @@ Provides REST endpoints for:
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Annotated
 from uuid import UUID
 
 import os
@@ -44,6 +45,10 @@ async def get_approval_service() -> ApprovalService:
     """Get approval service."""
     db = await get_db()
     return ApprovalService(db)
+
+
+SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
+ApprovalServiceDep = Annotated[ApprovalService, Depends(get_approval_service)]
 
 
 @asynccontextmanager
@@ -114,7 +119,7 @@ def create_app() -> FastAPI:
     @app.post("/sessions", response_model=SessionResponse)
     async def create_session(
         request: CreateSessionRequest,
-        service: SessionService = Depends(get_session_service),
+        service: SessionServiceDep,
     ):
         """Create a new development session."""
         session = await service.create_session(
@@ -135,13 +140,13 @@ def create_app() -> FastAPI:
     @app.get("/sessions/{session_id}", response_model=StatusResponse)
     async def get_session(
         session_id: str,
-        service: SessionService = Depends(get_session_service),
+        service: SessionServiceDep,
     ):
         """Get session status."""
         try:
             uuid = UUID(session_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session ID format")
+            raise HTTPException(status_code=400, detail="Invalid session ID format") from None
 
         status = await service.get_status(uuid)
 
@@ -161,7 +166,8 @@ def create_app() -> FastAPI:
     async def list_sessions(
         status: str | None = None,
         limit: int = 100,
-        service: SessionService = Depends(get_session_service),
+        *,
+        service: SessionServiceDep,
     ):
         """List sessions."""
         session_status = None
@@ -169,7 +175,7 @@ def create_app() -> FastAPI:
             try:
                 session_status = SessionStatus(status)
             except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid status")
+                raise HTTPException(status_code=400, detail="Invalid status") from None
 
         sessions = await service.list_sessions(
             status=session_status,
@@ -191,7 +197,8 @@ def create_app() -> FastAPI:
         session_id: str,
         background_tasks: BackgroundTasks,
         request: RunStageRequest | None = None,
-        service: SessionService = Depends(get_session_service),
+        *,
+        service: SessionServiceDep,
     ):
         """Run a workflow stage.
         
@@ -200,8 +207,8 @@ def create_app() -> FastAPI:
         try:
             uuid = UUID(session_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session ID format")
-        
+            raise HTTPException(status_code=400, detail="Invalid session ID format") from None
+
         # Check if background execution is requested
         is_background = request.background if request else False
         
@@ -228,14 +235,14 @@ def create_app() -> FastAPI:
         session_id: str,
         stage_id: str,
         request: ApprovalRequest,
-        service: SessionService = Depends(get_session_service),
+        service: SessionServiceDep,
     ):
         """Approve a pending stage."""
         try:
             session_uuid = UUID(session_id)
             stage_uuid = UUID(stage_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid ID format")
+            raise HTTPException(status_code=400, detail="Invalid ID format") from None
 
         result = await service.approve_stage(
             session_uuid,
@@ -254,14 +261,14 @@ def create_app() -> FastAPI:
         session_id: str,
         stage_id: str,
         request: RejectionRequest,
-        service: SessionService = Depends(get_session_service),
+        service: SessionServiceDep,
     ):
         """Reject a pending stage."""
         try:
             session_uuid = UUID(session_id)
             stage_uuid = UUID(stage_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid ID format")
+            raise HTTPException(status_code=400, detail="Invalid ID format") from None
 
         result = await service.reject_stage(
             session_uuid,
@@ -279,7 +286,8 @@ def create_app() -> FastAPI:
     @app.get("/approvals")
     async def list_approvals(
         session_id: str | None = None,
-        service: ApprovalService = Depends(get_approval_service),
+        *,
+        service: ApprovalServiceDep,
     ):
         """List pending approvals."""
         session_uuid = None
@@ -287,7 +295,7 @@ def create_app() -> FastAPI:
             try:
                 session_uuid = UUID(session_id)
             except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid session ID format")
+                raise HTTPException(status_code=400, detail="Invalid session ID format") from None
 
         approvals = await service.get_pending_approvals(session_uuid)
 
@@ -306,13 +314,13 @@ def create_app() -> FastAPI:
     @app.get("/approvals/{approval_id}")
     async def get_approval(
         approval_id: str,
-        service: ApprovalService = Depends(get_approval_service),
+        service: ApprovalServiceDep,
     ):
         """Get approval details."""
         try:
             uuid = UUID(approval_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid approval ID format")
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
 
         summary = await service.get_approval_summary(uuid)
         if not summary:
@@ -324,14 +332,14 @@ def create_app() -> FastAPI:
     async def approve(
         approval_id: str,
         request: ApprovalRequest,
-        approval_service: ApprovalService = Depends(get_approval_service),
-        session_service: SessionService = Depends(get_session_service),
+        approval_service: ApprovalServiceDep,
+        session_service: SessionServiceDep,
     ):
         """Approve a request."""
         try:
             uuid = UUID(approval_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid approval ID format")
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
 
         approval = await approval_service.get_approval(uuid)
         if not approval:
@@ -357,14 +365,14 @@ def create_app() -> FastAPI:
     async def reject(
         approval_id: str,
         request: RejectionRequest,
-        approval_service: ApprovalService = Depends(get_approval_service),
-        session_service: SessionService = Depends(get_session_service),
+        approval_service: ApprovalServiceDep,
+        session_service: SessionServiceDep,
     ):
         """Reject a request."""
         try:
             uuid = UUID(approval_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid approval ID format")
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
 
         approval = await approval_service.get_approval(uuid)
         if not approval:
@@ -390,13 +398,13 @@ def create_app() -> FastAPI:
     async def add_comment(
         approval_id: str,
         request: AddCommentRequest,
-        service: ApprovalService = Depends(get_approval_service),
+        service: ApprovalServiceDep,
     ):
         """Add comment to an approval."""
         try:
             uuid = UUID(approval_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid approval ID format")
+            raise HTTPException(status_code=400, detail="Invalid approval ID format") from None
 
         updated = await service.add_comment(
             approval_id=uuid,

@@ -15,6 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from core.memory.types import MemoryEntry, MemoryQuery, MemoryType
+from core.storage.database import Database
 
 
 class EpisodicMemoryStore:
@@ -23,7 +24,7 @@ class EpisodicMemoryStore:
     Persists to database for durability.
     """
 
-    def __init__(self, database: "Database | None" = None):
+    def __init__(self, database: Database | None = None):
         """Initialize episodic memory store.
 
         Args:
@@ -167,10 +168,10 @@ class EpisodicMemoryStore:
         # Filter for interactions
         interactions = []
         for entry in entries:
-            if entry.agent_name == from_agent:
-                # Check if this entry references to_agent
-                if to_agent in entry.content or to_agent in entry.tags:
-                    interactions.append(entry)
+            if entry.agent_name == from_agent and (
+                to_agent in entry.content or to_agent in entry.tags
+            ):
+                interactions.append(entry)
 
         return interactions
 

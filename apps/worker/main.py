@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import time
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -73,10 +74,8 @@ class Worker:
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("Worker stopped")
 
     async def _run_loop(self) -> None:
@@ -300,10 +299,10 @@ class Worker:
         # Dynamic import
         module_path, class_name = agent_class.rsplit(".", 1)
         module = __import__(module_path, fromlist=[class_name])
-        AgentClass = getattr(module, class_name)
+        agent_class_obj = getattr(module, class_name)
 
         # Create and execute agent
-        agent = AgentClass()
+        agent = agent_class_obj()
         result = await agent.execute(context)
 
         return result.model_dump()

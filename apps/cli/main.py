@@ -100,7 +100,7 @@ def status(
             uuid = UUID(session_id)
         except ValueError:
             console.print("[red]Invalid session ID format[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
         result = await service.get_status(uuid)
 
@@ -160,7 +160,7 @@ def list(
                 session_status = SessionStatus(status)
             except ValueError:
                 console.print(f"[red]Invalid status: {status}[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from None
 
         sessions = await service.list_sessions(
             status=session_status,
@@ -205,7 +205,7 @@ def run(
             uuid = UUID(session_id)
         except ValueError:
             console.print("[red]Invalid session ID format[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
         result = await service.run_stage(uuid, stage)
 
@@ -245,7 +245,7 @@ def approve(
             stage_uuid = UUID(stage_id)
         except ValueError:
             console.print("[red]Invalid ID format[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
         result = await service.approve_stage(
             session_uuid,
@@ -288,7 +288,7 @@ def reject(
             stage_uuid = UUID(stage_id)
         except ValueError:
             console.print("[red]Invalid ID format[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
         result = await service.reject_stage(
             session_uuid,
@@ -329,7 +329,7 @@ def approvals(
                 session_uuid = UUID(session_id)
             except ValueError:
                 console.print("[red]Invalid session ID format[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from None
 
         approvals = await service.get_pending_approvals(session_uuid)
 

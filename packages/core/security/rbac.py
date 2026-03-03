@@ -6,11 +6,11 @@ Defines:
 """
 
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from functools import wraps
 
 
-class Permission(str, Enum):
+class Permission(StrEnum):
     """Permissions in the system."""
 
     SESSION_CREATE = "session:create"
@@ -48,9 +48,7 @@ class Role:
             return True
         # Check wildcard
         wildcard = permission.value.split(":")[0] + ":*"
-        if any(p.value == wildcard for p in self.permissions):
-            return True
-        return False
+        return any(p.value == wildcard for p in self.permissions)
 
 
 # Predefined roles
@@ -126,9 +124,7 @@ class RBAC:
             Role or None
         """
         role_name = self._user_roles.get(user_id)
-        if role_name:
-            return ROLES[role_name]
-        return None
+        return ROLES[role_name] if role_name else None
 
     def check_permission(self, user_id: str, permission: Permission) -> bool:
         """Check if user has permission.

@@ -298,11 +298,11 @@ class SessionService:
                 "tester_agent": TesterAgent,
             }
 
-            AgentClass = agent_map.get(stage.agent_name)
-            if not AgentClass:
+            agent_class = agent_map.get(stage.agent_name)
+            if not agent_class:
                 raise ValueError(f"Unknown agent: {stage.agent_name}")
 
-            agent = AgentClass(config=self._build_agent_config(stage.agent_name))
+            agent = agent_class(config=self._build_agent_config(stage.agent_name))
             result = await agent.execute(context)
 
             # Store result

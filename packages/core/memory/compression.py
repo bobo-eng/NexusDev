@@ -156,10 +156,7 @@ class MemoryCompressor:
             return True
 
         # Low importance
-        if entry.importance < 0.3:
-            return True
-
-        return False
+        return entry.importance < 0.3
 
     async def compress_batch(
         self,
@@ -222,16 +219,11 @@ class MemoryPruner:
 
         # Check age
         age = datetime.utcnow() - entry.created_at
-        if age > timedelta(days=self.max_age_days):
-            # Prune if also low importance
-            if entry.importance < self.min_importance:
-                return True
-
-        # Prune entries with negative feedback
-        if entry.feedback_positive is False:
+        if age > timedelta(days=self.max_age_days) and entry.importance < self.min_importance:
             return True
 
-        return False
+        # Prune entries with negative feedback
+        return entry.feedback_positive is False
 
     async def prune_batch(
         self,

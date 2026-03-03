@@ -3,7 +3,7 @@
 Determines the next action based on current state and SOP rules.
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from core.domain.stage import StageStatus
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from core.workflow.graph import DevelopmentState
 
 
-class RouteDecision(str, Enum):
+class RouteDecision(StrEnum):
     """Possible routing decisions."""
 
     PROCEED = "proceed"  # Continue to next stage

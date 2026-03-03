@@ -8,14 +8,14 @@ Defines:
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     """Types of memory in the system."""
 
     # Working memory - current session context (short-term)
@@ -31,7 +31,7 @@ class MemoryType(str, Enum):
     PROCEDURAL = "procedural"
 
 
-class MemoryScope(str, Enum):
+class MemoryScope(StrEnum):
     """Scope levels for memory isolation."""
 
     # Session-level: Only visible within current session
