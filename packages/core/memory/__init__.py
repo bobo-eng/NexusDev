@@ -11,14 +11,14 @@ Retrieval:
 - Graph: Relationship-based navigation
 """
 
-from core.memory.types import (
-    MemoryType,
-    MemoryScope,
-    MemoryEntry,
-    AgentMemoryProfile,
-    MemoryQuery,
-)
 from core.memory.manager import MemoryManager, get_memory_manager
+from core.memory.types import (
+    AgentMemoryProfile,
+    MemoryEntry,
+    MemoryQuery,
+    MemoryScope,
+    MemoryType,
+)
 
 __all__ = [
     "MemoryType",

@@ -1,9 +1,9 @@
 """Memory stores for different memory types."""
 
-from .working import WorkingMemoryStore
 from .episodic import EpisodicMemoryStore
-from .semantic import SemanticMemoryStore
 from .procedural import ProceduralMemoryStore
+from .semantic import SemanticMemoryStore
+from .working import WorkingMemoryStore
 
 __all__ = [
     "WorkingMemoryStore",

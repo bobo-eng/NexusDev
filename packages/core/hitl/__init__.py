@@ -1,10 +1,10 @@
 """HITL - Human-in-the-Loop approval system."""
 
 from .approval_sm import (
-    ApprovalStateMachine,
-    ApprovalState,
     ApprovalAction,
     ApprovalRecord,
+    ApprovalState,
+    ApprovalStateMachine,
 )
 
 __all__ = [

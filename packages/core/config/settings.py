@@ -17,15 +17,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class DatabaseSettings(BaseSettings):
     """Database configuration."""
+
     model_config = SettingsConfigDict(env_prefix="DB_")
-    
+
     url: str = "sqlite+aiosqlite:///./nexusdev.db"
     echo: bool = False
 
 
 class LLMProviderSettings(BaseSettings):
     """LLM provider configuration."""
-    
+
     name: str = "openai"
     api_key: str = ""
     base_url: str | None = None
@@ -37,16 +38,18 @@ class LLMProviderSettings(BaseSettings):
 
 class RedisSettings(BaseSettings):
     """Redis configuration."""
+
     model_config = SettingsConfigDict(env_prefix="REDIS_")
-    
+
     url: str | None = None
     enabled: bool = False
 
 
 class APISettings(BaseSettings):
     """API server configuration."""
+
     model_config = SettingsConfigDict(env_prefix="API_")
-    
+
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
@@ -54,8 +57,9 @@ class APISettings(BaseSettings):
 
 class WorkerSettings(BaseSettings):
     """Worker configuration."""
+
     model_config = SettingsConfigDict(env_prefix="WORKER_")
-    
+
     poll_interval: int = 5
     max_concurrent: int = 4
     stage_timeout_minutes: int = 30
@@ -63,37 +67,40 @@ class WorkerSettings(BaseSettings):
 
 class HITLSettings(BaseSettings):
     """HITL configuration."""
+
     model_config = SettingsConfigDict(env_prefix="HITL_")
-    
+
     default_timeout_hours: int = 24
     enable_notifications: bool = False
+    auto_advance_after_approval: bool = False
 
 
 class SOPSettings(BaseSettings):
     """SOP configuration."""
-    
+
     config_path: str = "config/sop/default.yaml"
     auto_approve: bool = False
 
 
 class Settings(BaseSettings):
     """Unified application settings.
-    
+
     Loads from environment variables and config files.
     """
+
     model_config = SettingsConfigDict(
         env_file="config/env/.env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
-    
+
     # Application
     app_name: str = "NexusDev"
     version: str = "0.1.0"
     debug: bool = Field(default=False, alias="DEBUG")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     secret_key: str = Field(default="change-me", alias="SECRET_KEY")
-    
+
     # Sub-settings
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     llm: LLMProviderSettings = Field(default_factory=LLMProviderSettings)
@@ -102,42 +109,42 @@ class Settings(BaseSettings):
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
     hitl: HITLSettings = Field(default_factory=HITLSettings)
     sop: SOPSettings = Field(default_factory=SOPSettings)
-    
+
     # Feature flags
     enable_openclaw: bool = False
     enable_openwork: bool = False
-    
+
     # Paths
     artifacts_path: str = "./artifacts"
-    
+
     @classmethod
     def from_yaml(cls, path: str) -> "Settings":
         """Load settings from YAML file.
-        
+
         Args:
             path: Path to YAML config file
-            
+
         Returns:
             Settings instance
         """
         if not Path(path).exists():
             return cls()
-        
+
         with open(path) as f:
             config = yaml.safe_load(f)
-        
+
         return cls(**config)
-    
+
     def to_yaml(self, path: str) -> None:
         """Save settings to YAML file."""
         with open(path, "w") as f:
             yaml.dump(self.model_dump(), f, default_flow_style=False)
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance.
-    
+
     Returns:
         Settings instance (cached)
     """
@@ -146,34 +153,34 @@ def get_settings() -> Settings:
 
 def load_sop_config(path: str | None = None) -> dict[str, Any]:
     """Load SOP configuration from YAML.
-    
+
     Args:
         path: Path to SOP config file (default from settings)
-        
+
     Returns:
         SOP configuration dictionary
     """
     if path is None:
         path = get_settings().sop.config_path
-    
+
     if not Path(path).exists():
         raise FileNotFoundError(f"SOP config not found: {path}")
-    
+
     with open(path) as f:
         return yaml.safe_load(f)
 
 
 def load_model_config(path: str = "config/models/default.yaml") -> dict[str, Any]:
     """Load model configuration from YAML.
-    
+
     Args:
         path: Path to model config file
-        
+
     Returns:
         Model configuration dictionary
     """
     if not Path(path).exists():
         return {}
-    
+
     with open(path) as f:
         return yaml.safe_load(f)

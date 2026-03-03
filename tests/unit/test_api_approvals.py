@@ -3,10 +3,10 @@
 from uuid import uuid4
 
 import pytest
+from core.services.approval_service import ApprovalService
 from httpx import ASGITransport, AsyncClient
 
 import apps.api.main as api_main
-from core.services.approval_service import ApprovalService
 
 
 @pytest.fixture

@@ -5,14 +5,16 @@ This is the primary interface exposed to CLI and API layers.
 
 import logging
 import os
+import time
 from typing import Any
 from uuid import UUID
 
 from core.agents.base import AgentConfig
-from core.config.settings import load_sop_config
+from core.config.settings import get_settings, load_sop_config
 from core.domain.session import Session, SessionStatus
 from core.domain.stage import Stage, StageStatus, StageType
-from core.sop.sop_engine import SOPEngine, SOPConfig
+from core.observability.metrics import get_metrics
+from core.sop.sop_engine import SOPConfig, SOPEngine
 from core.storage.database import Database
 from core.storage.repository import SessionRepository, StageRepository
 from core.workflow.graph import create_development_graph
@@ -29,9 +31,22 @@ def load_default_sop_config() -> SOPConfig:
         return SOPEngine(SOPConfig()).create_default_mvp_sop()
 
 
+def _parse_bool(value: str | None) -> bool | None:
+    """Parse a boolean string value."""
+    if value is None:
+        return None
+
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 class SessionService:
     """Service for managing development sessions.
-    
+
     Provides high-level operations:
     - create_session: Create new session
     - run_stage: Execute a workflow stage
@@ -39,14 +54,14 @@ class SessionService:
     - reject_stage: Reject a pending stage
     - get_status: Get session status
     """
-    
+
     def __init__(self, database: Database, sop_config: SOPConfig | None = None):
         self.database = database
         if sop_config is None:
             sop_config = load_default_sop_config()
         self.sop_engine = SOPEngine(sop_config)
         self.workflow_graph = create_development_graph(self.sop_engine)
-    
+
     async def create_session(
         self,
         name: str,
@@ -56,14 +71,14 @@ class SessionService:
         context: dict[str, Any] | None = None,
     ) -> Session:
         """Create a new development session.
-        
+
         Args:
             name: Session name
             requirement: User requirement
             description: Optional description
             created_by: User creating the session
             context: Additional context
-            
+
         Returns:
             Created session
         """
@@ -74,37 +89,39 @@ class SessionService:
             created_by=created_by,
             context=context or {},
         )
-        
+
         async with self.database.session() as db_session:
             repo = SessionRepository(db_session)
             await repo.create(session)
-        
+
         logger.info(f"[Session {session.id}] Created session '{name}'")
         return session
-    
+
     async def get_session(self, session_id: UUID) -> Session | None:
         """Get session by ID."""
         async with self.database.session() as db_session:
             repo = SessionRepository(db_session)
             return await repo.get_by_id(session_id)
-    
+
     async def get_status(self, session_id: UUID) -> dict[str, Any]:
         """Get comprehensive session status."""
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
-            
+
             session = await session_repo.get_by_id(session_id)
             if not session:
                 return {"error": "Session not found"}
-            
+
             stages = await stage_repo.get_by_session(session_id)
-            
+
             return {
                 "session_id": str(session_id),
                 "name": session.name,
                 "status": session.status.value,
-                "current_stage_id": str(session.current_stage_id) if session.current_stage_id else None,
+                "current_stage_id": str(session.current_stage_id)
+                if session.current_stage_id
+                else None,
                 "completed_stages": [str(s) for s in session.completed_stages],
                 "stages": [
                     {
@@ -119,21 +136,21 @@ class SessionService:
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
             }
-    
+
     async def run_stage(
         self,
         session_id: UUID,
         stage_type: StageType | str | None = None,
     ) -> dict[str, Any]:
         """Execute a workflow stage.
-        
+
         This method is idempotent - calling it multiple times with the same
         session_id and stage_type will not create duplicate stages.
-        
+
         Args:
             session_id: Session UUID
             stage_type: Specific stage type to run (auto-detected if None)
-            
+
         Returns:
             Execution result
         """
@@ -144,11 +161,11 @@ class SessionService:
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
-            
+
             session = await session_repo.get_by_id(session_id)
             if not session:
                 return {"error": "Session not found"}
-            
+
             if not session.is_active():
                 return {"error": f"Session is not active (status: {session.status.value})"}
 
@@ -173,7 +190,9 @@ class SessionService:
             # Check for existing stage (idempotency)
             for existing in existing_stages:
                 if existing.stage_type == stage_type and existing.status in [
-                    StageStatus.PENDING, StageStatus.RUNNING, StageStatus.WAITING_APPROVAL
+                    StageStatus.PENDING,
+                    StageStatus.RUNNING,
+                    StageStatus.WAITING_APPROVAL,
                 ]:
                     logger.info(f"[Session {session_id}] Stage {stage_type.value} already exists with status {existing.status.value}")
                     
@@ -201,7 +220,7 @@ class SessionService:
                         "requires_approval": existing.requires_approval,
                         "message": f"Stage is {existing.status.value}",
                     }
-            
+
             # Create stage
             stage = Stage(
                 session_id=session_id,
@@ -213,22 +232,24 @@ class SessionService:
                 max_retries=stage_def.max_retries,
                 requires_approval=stage_def.requires_approval,
             )
-            
+
             await stage_repo.create(stage)
-            
+
             # Update session
             session.current_stage_id = stage.id
             session.mark_running()
             await session_repo.update(session)
-            
-            logger.info(f"[Session {session_id}] Created stage {stage.name} (requires_approval={stage.requires_approval})")
+
+            logger.info(
+                f"[Session {session_id}] Created stage {stage.name} (requires_approval={stage.requires_approval})"
+            )
 
         if not session or not stage or not stage_def:
             return {"error": "Failed to initialize stage execution"}
 
         # Execute the workflow outside of creation transaction to avoid DB locks
         return await self._execute_workflow(session, stage, stage_def)
-    
+
     async def _execute_workflow(
         self,
         session: Session,
@@ -236,34 +257,39 @@ class SessionService:
         stage_def: Any,
     ) -> dict[str, Any]:
         """Execute the LangGraph workflow for a stage.
-        
+
         Args:
             session: Session entity
             stage: Stage entity
             stage_def: Stage definition from SOP
-            
+
         Returns:
             Execution result
         """
-        from core.agents.pm_agent import PMAgent
         from core.agents.architect_agent import ArchitectAgent
         from core.agents.coder_agent import CoderAgent
+        from core.agents.pm_agent import PMAgent
         from core.agents.reviewer_agent import ReviewerAgent
         from core.agents.tester_agent import TesterAgent
         from core.services.approval_service import ApprovalService
-        
+
         # Start stage
         stage.start()
         async with self.database.session() as db_session:
             await StageRepository(db_session).update(stage)
-        
+
+        start_time = time.perf_counter()
+        metrics = get_metrics()
+
         try:
             # Build execution context
             context = await self._build_execution_context(session, stage)
-            
+
             # Execute agent
-            logger.info(f"[Session {session.id}] Executing {stage.agent_name} for stage {stage.name}")
-            
+            logger.info(
+                f"[Session {session.id}] Executing {stage.agent_name} for stage {stage.name}"
+            )
+
             agent_map = {
                 "pm_agent": PMAgent,
                 "architect_agent": ArchitectAgent,
@@ -271,22 +297,22 @@ class SessionService:
                 "reviewer_agent": ReviewerAgent,
                 "tester_agent": TesterAgent,
             }
-            
+
             AgentClass = agent_map.get(stage.agent_name)
             if not AgentClass:
                 raise ValueError(f"Unknown agent: {stage.agent_name}")
-            
+
             agent = AgentClass(config=self._build_agent_config(stage.agent_name))
             result = await agent.execute(context)
-            
+
             # Store result
             stage.result = result.model_dump()
-            
+
             # Check if approval required
             if stage.requires_approval:
                 stage.wait_for_approval()
                 session.mark_waiting_approval()
-                
+
                 # Create approval request
                 approval_service = ApprovalService(self.database)
                 approval = await approval_service.create_approval(
@@ -297,13 +323,23 @@ class SessionService:
                     request_message=f"Please review {stage.name} output",
                     timeout_hours=stage_def.approval_timeout_hours if stage_def else 24,
                 )
-                
+
                 async with self.database.session() as db_session:
                     await StageRepository(db_session).update(stage)
                     await SessionRepository(db_session).update(session)
-                
-                logger.info(f"[Session {session.id}] Stage {stage.name} waiting for approval (approval_id={approval.id})")
-                
+
+                logger.info(
+                    f"[Session {session.id}] Stage {stage.name} waiting for approval (approval_id={approval.id})"
+                )
+
+                metrics.record_stage(
+                    stage_type=stage.stage_type.value,
+                    agent_name=stage.agent_name,
+                    success=True,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    retry_count=stage.retry_count,
+                )
+
                 return {
                     "session_id": str(session.id),
                     "stage_id": str(stage.id),
@@ -322,13 +358,21 @@ class SessionService:
                     session.mark_completed()
                 else:
                     session.mark_running()
-                
+
                 async with self.database.session() as db_session:
                     await StageRepository(db_session).update(stage)
                     await SessionRepository(db_session).update(session)
-                
+
                 logger.info(f"[Session {session.id}] Stage {stage.name} completed")
-                
+
+                metrics.record_stage(
+                    stage_type=stage.stage_type.value,
+                    agent_name=stage.agent_name,
+                    success=True,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    retry_count=stage.retry_count,
+                )
+
                 return {
                     "session_id": str(session.id),
                     "stage_id": str(stage.id),
@@ -338,16 +382,25 @@ class SessionService:
                     "requires_approval": False,
                     "result": stage.result,
                 }
-                
+
         except Exception as e:
             logger.error(f"[Session {session.id}] Stage {stage.name} failed: {e}")
             stage.fail(str(e))
             session.mark_failed()
-            
+
             async with self.database.session() as db_session:
                 await StageRepository(db_session).update(stage)
                 await SessionRepository(db_session).update(session)
-            
+
+            metrics.record_stage(
+                stage_type=stage.stage_type.value,
+                agent_name=stage.agent_name,
+                success=False,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                retry_count=stage.retry_count,
+                error_type=type(e).__name__,
+            )
+
             return {
                 "session_id": str(session.id),
                 "stage_id": str(stage.id),
@@ -356,7 +409,7 @@ class SessionService:
                 "status": "failed",
                 "error": str(e),
             }
-    
+
     async def _build_execution_context(
         self,
         session: Session,
@@ -367,12 +420,12 @@ class SessionService:
             "requirement": session.requirement,
             "session_context": session.context,
         }
-        
+
         # Load previous stage outputs
         async with self.database.session() as db_session:
             stage_repo = StageRepository(db_session)
             all_stages = await stage_repo.get_by_session(session.id)
-            
+
             for s in all_stages:
                 if s.id != stage.id and s.result:
                     if s.stage_type.value == "requirement_analysis":
@@ -383,9 +436,9 @@ class SessionService:
                         context["code"] = s.result
                     elif s.stage_type.value == "code_review":
                         context["review"] = s.result
-        
+
         return context
-    
+
     async def approve_stage(
         self,
         session_id: UUID,
@@ -398,21 +451,23 @@ class SessionService:
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
-            
+
             session = await session_repo.get_by_id(session_id)
             if not session:
                 return {"error": "Session not found"}
-            
+
             if not session.can_approve():
                 return {"error": f"Session cannot be approved (status: {session.status.value})"}
-            
+
             stage = await stage_repo.get_by_id(stage_id)
             if not stage:
                 return {"error": "Stage not found"}
-            
+
             if stage.status != StageStatus.WAITING_APPROVAL:
-                return {"error": f"Stage is not waiting for approval (status: {stage.status.value})"}
-            
+                return {
+                    "error": f"Stage is not waiting for approval (status: {stage.status.value})"
+                }
+
             # Approve stage
             stage.approve(approved_by, comment)
             await stage_repo.update(stage)
@@ -431,16 +486,30 @@ class SessionService:
         if pending:
             await approval_service.approve(pending.id, approved_by, comment)
 
-        logger.info(f"[Session {session_id}] Stage {stage_name or stage_id} approved by {approved_by}")
-
-        return {
+        logger.info(
+            f"[Session {session_id}] Stage {stage_name or stage_id} approved by {approved_by}"
+        )
+        response: dict[str, Any] = {
             "session_id": str(session_id),
             "stage_id": str(stage_id),
             "status": "approved",
             "approved_by": approved_by,
             "message": comment,
         }
-    
+
+        if self._should_auto_advance_after_approval():
+            next_stage_result = await self.run_stage(session_id)
+            if "error" in next_stage_result:
+                logger.warning(
+                    f"[Session {session_id}] Auto-advance failed after approval: "
+                    f"{next_stage_result['error']}"
+                )
+                response["next_stage_error"] = next_stage_result["error"]
+            else:
+                response["next_stage"] = next_stage_result
+
+        return response
+
     async def reject_stage(
         self,
         session_id: UUID,
@@ -453,21 +522,23 @@ class SessionService:
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             stage_repo = StageRepository(db_session)
-            
+
             session = await session_repo.get_by_id(session_id)
             if not session:
                 return {"error": "Session not found"}
-            
+
             if not session.can_reject():
                 return {"error": f"Session cannot be rejected (status: {session.status.value})"}
-            
+
             stage = await stage_repo.get_by_id(stage_id)
             if not stage:
                 return {"error": "Stage not found"}
-            
+
             if stage.status != StageStatus.WAITING_APPROVAL:
-                return {"error": f"Stage is not waiting for approval (status: {stage.status.value})"}
-            
+                return {
+                    "error": f"Stage is not waiting for approval (status: {stage.status.value})"
+                }
+
             # Reject stage
             stage.reject(rejected_by, reason)
             await stage_repo.update(stage)
@@ -485,7 +556,9 @@ class SessionService:
         if pending:
             await approval_service.reject(pending.id, rejected_by, reason)
 
-        logger.info(f"[Session {session_id}] Stage {stage_name or stage_id} rejected by {rejected_by}")
+        logger.info(
+            f"[Session {session_id}] Stage {stage_name or stage_id} rejected by {rejected_by}"
+        )
 
         return {
             "session_id": str(session_id),
@@ -494,7 +567,7 @@ class SessionService:
             "rejected_by": rejected_by,
             "reason": reason,
         }
-    
+
     async def list_sessions(
         self,
         status: SessionStatus | None = None,
@@ -509,7 +582,7 @@ class SessionService:
             else:
                 # Get all sessions with pagination
                 return await repo.get_all(limit=limit, offset=offset)
-    
+
     def _determine_next_stage_type(self, stages: list[Stage]) -> StageType:
         """Determine the next stage type based on session progress."""
         if not stages:
@@ -628,6 +701,17 @@ class SessionService:
             temperature=temperature_map.get(agent_name, 0.2),
         )
 
+    def _should_auto_advance_after_approval(self) -> bool:
+        """Check whether to auto-run the next stage after approval."""
+        env_value = _parse_bool(os.getenv("HITL_AUTO_ADVANCE_AFTER_APPROVAL"))
+        if env_value is not None:
+            return env_value
+
+        try:
+            return bool(get_settings().hitl.auto_advance_after_approval)
+        except Exception:
+            return False
+
     def _resolve_provider(self) -> str:
         """Resolve provider in priority order: explicit -> OpenAI key -> Anthropic key."""
         explicit = os.getenv("NEXUSDEV_LLM_PROVIDER")
@@ -639,11 +723,13 @@ class SessionService:
         if os.getenv("ANTHROPIC_API_KEY"):
             return "anthropic"
         return "openai"
-    
+
     def _get_stage_definition(self, stage_type: StageType) -> Any:
         """Get stage definition from SOP."""
         stage_map = {
-            StageType.REQUIREMENT_ANALYSIS: self.sop_engine.config.get_stage("requirement_analysis"),
+            StageType.REQUIREMENT_ANALYSIS: self.sop_engine.config.get_stage(
+                "requirement_analysis"
+            ),
             StageType.SYSTEM_DESIGN: self.sop_engine.config.get_stage("system_design"),
             StageType.CODING: self.sop_engine.config.get_stage("coding"),
             StageType.CODE_REVIEW: self.sop_engine.config.get_stage("code_review"),

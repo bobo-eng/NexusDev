@@ -9,13 +9,13 @@ Removes or masks sensitive information:
 
 import re
 from dataclasses import dataclass
-from typing import Pattern
+from re import Pattern
 
 
 @dataclass
 class SanitizationRule:
     """Rule for content sanitization."""
-    
+
     name: str
     pattern: Pattern[str]
     replacement: str
@@ -24,7 +24,7 @@ class SanitizationRule:
 
 class Sanitizer:
     """Content sanitizer for sensitive data."""
-    
+
     # Default rules for common secrets
     DEFAULT_RULES = [
         SanitizationRule(
@@ -71,7 +71,9 @@ class Sanitizer:
         ),
         SanitizationRule(
             name="private_key",
-            pattern=re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
+            pattern=re.compile(
+                r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+            ),
             replacement="[PRIVATE_KEY_REDACTED]",
             description="Private key",
         ),
@@ -82,21 +84,21 @@ class Sanitizer:
             description="Database URL with credentials",
         ),
     ]
-    
+
     def __init__(self, rules: list[SanitizationRule] | None = None):
         """Initialize sanitizer.
-        
+
         Args:
             rules: Custom sanitization rules (uses defaults if None)
         """
         self.rules = rules or self.DEFAULT_RULES.copy()
-    
+
     def sanitize(self, content: str) -> str:
         """Sanitize content.
-        
+
         Args:
             content: Content to sanitize
-            
+
         Returns:
             Sanitized content
         """
@@ -104,25 +106,25 @@ class Sanitizer:
         for rule in self.rules:
             result = rule.pattern.sub(rule.replacement, result)
         return result
-    
+
     def add_rule(self, rule: SanitizationRule) -> "Sanitizer":
         """Add a sanitization rule.
-        
+
         Args:
             rule: Rule to add
-            
+
         Returns:
             Self for chaining
         """
         self.rules.append(rule)
         return self
-    
+
     def remove_rule(self, name: str) -> "Sanitizer":
         """Remove a sanitization rule.
-        
+
         Args:
             name: Name of rule to remove
-            
+
         Returns:
             Self for chaining
         """
@@ -136,10 +138,10 @@ _default_sanitizer = Sanitizer()
 
 def sanitize_content(content: str) -> str:
     """Sanitize content using default rules.
-    
+
     Args:
         content: Content to sanitize
-        
+
     Returns:
         Sanitized content
     """
@@ -148,11 +150,11 @@ def sanitize_content(content: str) -> str:
 
 def sanitize_dict(data: dict, fields: list[str] | None = None) -> dict:
     """Sanitize dictionary values.
-    
+
     Args:
         data: Dictionary to sanitize
         fields: Specific fields to sanitize (all string values if None)
-        
+
     Returns:
         Sanitized dictionary
     """

@@ -15,6 +15,8 @@ NexusDev is a **Multi-Agent Automated Development System** built with:
 - API now supports approval detail and comment endpoints:
   - `GET /approvals/{approval_id}`
   - `POST /approvals/{approval_id}/comments`
+- Approval can auto-advance to next stage when `HITL_AUTO_ADVANCE_AFTER_APPROVAL=true`.
+- Stage and approval flows now write runtime metrics through `core.observability.metrics`.
 
 ## Project Structure
 

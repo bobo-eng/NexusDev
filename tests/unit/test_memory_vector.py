@@ -3,7 +3,6 @@
 from uuid import uuid4
 
 import pytest
-
 from core.memory.retrieval.vector import QdrantVectorStore
 
 

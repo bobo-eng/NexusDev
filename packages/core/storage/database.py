@@ -1,8 +1,8 @@
 """Database connection and session management."""
 
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -17,14 +17,14 @@ Base = declarative_base()
 
 class Database:
     """Database connection manager.
-    
+
     Manages SQLAlchemy engine and session creation.
     Supports both PostgreSQL and SQLite.
     """
-    
+
     def __init__(self, database_url: str, echo: bool = False):
         """Initialize database.
-        
+
         Args:
             database_url: Database URL
                 - SQLite: sqlite+aiosqlite:///path/to/db.sqlite
@@ -44,7 +44,7 @@ class Database:
 
         # Create engine
         self.engine = create_async_engine(database_url, **engine_kwargs)
-        
+
         # Create session factory
         self.session_factory = async_sessionmaker(
             self.engine,
@@ -52,23 +52,23 @@ class Database:
             expire_on_commit=False,
             autoflush=False,
         )
-    
+
     async def create_tables(self) -> None:
         """Create all tables."""
         from core.storage import models  # noqa: F401
-        
+
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    
+
     async def drop_tables(self) -> None:
         """Drop all tables."""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
-    
+
     @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession, None]:
         """Get database session context manager.
-        
+
         Yields:
             AsyncSession: Database session
         """
@@ -81,7 +81,7 @@ class Database:
             raise
         finally:
             await session.close()
-    
+
     async def close(self) -> None:
         """Close database connections."""
         await self.engine.dispose()
@@ -92,11 +92,11 @@ def create_database(
     echo: bool = False,
 ) -> Database:
     """Create database instance.
-    
+
     Args:
         database_url: Database URL (defaults to SQLite in memory)
         echo: Enable SQL logging
-        
+
     Returns:
         Database instance
     """
@@ -106,5 +106,5 @@ def create_database(
     if database_url is None:
         # Default to SQLite in current directory
         database_url = "sqlite+aiosqlite:///./nexusdev.db"
-    
+
     return Database(database_url, echo=echo)

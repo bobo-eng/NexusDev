@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
@@ -18,88 +18,88 @@ from core.domain.stage import StageStatus
 
 class DevelopmentState(BaseModel):
     """State object for the development workflow.
-    
+
     This is passed between nodes in the graph and contains
     all context needed for execution, including memory.
     """
-    
+
     # Session identification
     session_id: UUID
     project_id: str | None = None
-    
+
     # Current execution state
     current_stage: str = ""
     stage_status: StageStatus = StageStatus.PENDING
-    
+
     # Session status
     session_status: SessionStatus = SessionStatus.CREATED
-    
+
     # Stage outputs (accumulated)
     requirements: dict[str, Any] = Field(default_factory=dict)
     design: dict[str, Any] = Field(default_factory=dict)
     code: dict[str, Any] = Field(default_factory=dict)
     review: dict[str, Any] = Field(default_factory=dict)
     tests: dict[str, Any] = Field(default_factory=dict)
-    
+
     # Artifact IDs
     artifact_ids: list[UUID] = Field(default_factory=list)
-    
+
     # HITL
     approval_record_id: UUID | None = None
     approval_decision: str | None = None
     approval_message: str = ""
-    
+
     # Retry tracking
     retry_count: dict[str, int] = Field(default_factory=dict)
-    
+
     # Error handling
     error_message: str = ""
     should_stop: bool = False
-    
+
     # Messages for logging
     messages: Annotated[list, add_messages] = Field(default_factory=list)
-    
+
     # ============ Memory Integration ============
-    
+
     # Working memory - current session context
     working_memory: list[dict[str, Any]] = Field(default_factory=list)
-    
+
     # Episodic memory - event history references
     episodic_memory_refs: list[UUID] = Field(default_factory=list)
-    
+
     # Semantic memory - relevant patterns/knowledge
     semantic_memory_refs: list[UUID] = Field(default_factory=list)
-    
+
     # Memory context for current agent
     agent_context: dict[str, Any] = Field(default_factory=dict)
-    
+
     # Shared context between agents (explicit passing)
     shared_context: dict[str, Any] = Field(default_factory=dict)
-    
+
     def increment_retry(self, stage: str) -> "DevelopmentState":
         """Increment retry count for a stage."""
         self.retry_count[stage] = self.retry_count.get(stage, 0) + 1
         return self
-    
+
     def get_retry_count(self, stage: str) -> int:
         """Get retry count for a stage."""
         return self.retry_count.get(stage, 0)
-    
+
     def add_artifact(self, artifact_id: UUID) -> "DevelopmentState":
         """Add an artifact ID."""
         if artifact_id not in self.artifact_ids:
             self.artifact_ids.append(artifact_id)
         return self
-    
+
     def mark_error(self, message: str) -> "DevelopmentState":
         """Mark state with error."""
         self.error_message = message
         self.session_status = SessionStatus.FAILED
         self.should_stop = True
         return self
-    
+
     # ============ Memory Methods ============
-    
+
     def add_to_working_memory(
         self,
         content: str,
@@ -108,6 +108,7 @@ class DevelopmentState(BaseModel):
     ) -> "DevelopmentState":
         """Add entry to working memory."""
         from uuid import uuid4
+
         entry = {
             "id": str(uuid4()),
             "content": content,
@@ -117,7 +118,7 @@ class DevelopmentState(BaseModel):
         }
         self.working_memory.append(entry)
         return self
-    
+
     def get_working_memory(
         self,
         agent_name: str | None = None,
@@ -128,61 +129,61 @@ class DevelopmentState(BaseModel):
         if agent_name:
             entries = [e for e in entries if e.get("agent") == agent_name]
         return entries[-limit:]
-    
+
     def add_shared_context(self, key: str, value: Any) -> "DevelopmentState":
         """Add to shared context (explicit agent communication)."""
         self.shared_context[key] = value
         return self
-    
+
     def get_shared_context(self, key: str) -> Any:
         """Get from shared context."""
         return self.shared_context.get(key)
-    
+
     def build_agent_prompt_context(self, agent_name: str) -> str:
         """Build prompt context for an agent including memory."""
         context_parts = []
-        
+
         # Add working memory
         working = self.get_working_memory(agent_name=agent_name, limit=5)
         if working:
             context_parts.append("## Previous Work")
             for entry in working:
                 context_parts.append(f"- {entry['content'][:200]}")
-        
+
         # Add shared context
         if self.shared_context:
             context_parts.append("## Shared Context")
             for key, value in self.shared_context.items():
                 if isinstance(value, str):
                     context_parts.append(f"- {key}: {value[:200]}")
-        
+
         return "\n".join(context_parts)
 
 
 def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
     """Create the development workflow graph.
-    
+
     Args:
         sop_engine: SOP engine for stage definitions
-        
+
     Returns:
         Compiled StateGraph
     """
     from core.workflow.nodes import (
+        code_review_node,
+        coding_node,
+        error_handler_node,
+        human_approval_node,
         requirement_analysis_node,
         system_design_node,
-        coding_node,
-        code_review_node,
         testing_node,
-        human_approval_node,
-        error_handler_node,
         wait_for_approval_node,
     )
-    from core.workflow.router import route_stage, RouteDecision
-    
+    from core.workflow.router import RouteDecision, route_stage
+
     # Create graph
     workflow = StateGraph(DevelopmentState)
-    
+
     # Add nodes
     workflow.add_node("requirement_analysis", requirement_analysis_node)
     workflow.add_node("system_design", system_design_node)
@@ -192,12 +193,12 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
     workflow.add_node("code_review", code_review_node)
     workflow.add_node("testing", testing_node)
     workflow.add_node("error_handler", error_handler_node)
-    
+
     # Define edges with routing
-    
+
     # Start -> requirement_analysis
     workflow.set_entry_point("requirement_analysis")
-    
+
     # requirement_analysis -> system_design (or error)
     workflow.add_conditional_edges(
         "requirement_analysis",
@@ -208,7 +209,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
             RouteDecision.FAIL: "error_handler",
         },
     )
-    
+
     # system_design -> human_approval (or error)
     workflow.add_conditional_edges(
         "system_design",
@@ -219,7 +220,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
             RouteDecision.FAIL: "error_handler",
         },
     )
-    
+
     # human_approval -> coding / wait_for_approval / back to design / error
     workflow.add_conditional_edges(
         "human_approval",
@@ -231,7 +232,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
             RouteDecision.FAIL: "error_handler",
         },
     )
-    
+
     # wait_for_approval loops back to human_approval (for recheck)
     workflow.add_conditional_edges(
         "wait_for_approval",
@@ -243,7 +244,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
             RouteDecision.FAIL: "error_handler",
         },
     )
-    
+
     # coding -> code_review (or error)
     workflow.add_conditional_edges(
         "coding",
@@ -254,7 +255,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
             RouteDecision.FAIL: "error_handler",
         },
     )
-    
+
     # code_review -> testing (or back to coding for fixes)
     workflow.add_conditional_edges(
         "code_review",
@@ -265,7 +266,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
             RouteDecision.FAIL: "error_handler",
         },
     )
-    
+
     # testing -> END (or back to coding for fixes)
     workflow.add_conditional_edges(
         "testing",
@@ -276,20 +277,20 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
             RouteDecision.FAIL: "error_handler",
         },
     )
-    
+
     # error_handler -> END
     workflow.add_edge("error_handler", END)
-    
+
     return workflow.compile()
 
 
 def create_mvp_graph() -> StateGraph:
     """Create MVP development graph with default SOP.
-    
+
     Returns:
         Compiled StateGraph
     """
-    from core.sop.sop_engine import SOPEngine, SOPConfig
-    
+    from core.sop.sop_engine import SOPConfig, SOPEngine
+
     sop_engine = SOPEngine(SOPEngine(SOPConfig()).create_default_mvp_sop())
     return create_development_graph(sop_engine)

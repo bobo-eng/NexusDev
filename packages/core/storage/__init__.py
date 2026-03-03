@@ -1,12 +1,12 @@
 """Storage layer for persistence."""
 
+from .database import Database, create_database
 from .repository import (
-    SessionRepository,
-    StageRepository,
     ArtifactRepository,
     ReviewRepository,
+    SessionRepository,
+    StageRepository,
 )
-from .database import Database, create_database
 
 __all__ = [
     "SessionRepository",

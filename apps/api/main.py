@@ -7,19 +7,18 @@ Provides REST endpoints for:
 - Status queries
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel, Field
+import os
 
 from core.domain.session import SessionStatus
-from core.services.session_service import SessionService
 from core.services.approval_service import ApprovalService
-import os
+from core.services.session_service import SessionService
 from core.storage.database import Database, create_database
-
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
 # Global database instance
 _db: Database | None = None
@@ -67,7 +66,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-    
+
     # Request/Response models
     class CreateSessionRequest(BaseModel):
         name: str = Field(..., min_length=1, max_length=200)
@@ -75,21 +74,20 @@ def create_app() -> FastAPI:
         description: str = Field(default="", max_length=1000)
         created_by: str = Field(default="api-user")
         context: dict = Field(default_factory=dict)
-    
+
     class SessionResponse(BaseModel):
         id: str
         name: str
         status: str
         created_at: str
-    
+
     class RunStageRequest(BaseModel):
         stage_type: str | None = None
         background: bool = Field(default=False, description="Run in background without waiting for completion")
-    
     class ApprovalRequest(BaseModel):
         message: str = ""
         user: str = "api-user"
-    
+
     class RejectionRequest(BaseModel):
         reason: str
         user: str = "api-user"
@@ -98,7 +96,7 @@ def create_app() -> FastAPI:
         author: str = "api-user"
         content: str = Field(..., min_length=1, max_length=5000)
         is_internal: bool = False
-    
+
     class StatusResponse(BaseModel):
         session_id: str
         name: str
@@ -106,12 +104,12 @@ def create_app() -> FastAPI:
         current_stage_id: str | None
         completed_stages: list[str]
         stages: list[dict]
-    
+
     # Health check
     @app.get("/health")
     async def health():
         return {"status": "healthy", "service": "nexusdev-api"}
-    
+
     # Session endpoints
     @app.post("/sessions", response_model=SessionResponse)
     async def create_session(
@@ -126,14 +124,14 @@ def create_app() -> FastAPI:
             created_by=request.created_by,
             context=request.context,
         )
-        
+
         return SessionResponse(
             id=str(session.id),
             name=session.name,
             status=session.status.value,
             created_at=session.created_at.isoformat(),
         )
-    
+
     @app.get("/sessions/{session_id}", response_model=StatusResponse)
     async def get_session(
         session_id: str,
@@ -144,12 +142,12 @@ def create_app() -> FastAPI:
             uuid = UUID(session_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid session ID format")
-        
+
         status = await service.get_status(uuid)
-        
+
         if "error" in status:
             raise HTTPException(status_code=404, detail=status["error"])
-        
+
         return StatusResponse(
             session_id=status["session_id"],
             name=status["name"],
@@ -158,7 +156,7 @@ def create_app() -> FastAPI:
             completed_stages=status["completed_stages"],
             stages=status["stages"],
         )
-    
+
     @app.get("/sessions")
     async def list_sessions(
         status: str | None = None,
@@ -172,12 +170,12 @@ def create_app() -> FastAPI:
                 session_status = SessionStatus(status)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid status")
-        
+
         sessions = await service.list_sessions(
             status=session_status,
             limit=limit,
         )
-        
+
         return [
             {
                 "id": str(s.id),
@@ -187,7 +185,7 @@ def create_app() -> FastAPI:
             }
             for s in sessions
         ]
-    
+
     @app.post("/sessions/{session_id}/run")
     async def run_stage(
         session_id: str,
@@ -219,12 +217,12 @@ def create_app() -> FastAPI:
         # Synchronous execution (original behavior)
         stage_type = request.stage_type if request else None
         result = await service.run_stage(uuid, stage_type)
-        
+
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
-        
+
         return result
-    
+
     @app.post("/sessions/{session_id}/stages/{stage_id}/approve")
     async def approve_stage(
         session_id: str,
@@ -238,19 +236,19 @@ def create_app() -> FastAPI:
             stage_uuid = UUID(stage_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid ID format")
-        
+
         result = await service.approve_stage(
             session_uuid,
             stage_uuid,
             request.user,
             request.message,
         )
-        
+
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
-        
+
         return result
-    
+
     @app.post("/sessions/{session_id}/stages/{stage_id}/reject")
     async def reject_stage(
         session_id: str,
@@ -264,19 +262,19 @@ def create_app() -> FastAPI:
             stage_uuid = UUID(stage_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid ID format")
-        
+
         result = await service.reject_stage(
             session_uuid,
             stage_uuid,
             request.user,
             request.reason,
         )
-        
+
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
-        
+
         return result
-    
+
     # Approval endpoints
     @app.get("/approvals")
     async def list_approvals(
@@ -290,9 +288,9 @@ def create_app() -> FastAPI:
                 session_uuid = UUID(session_id)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid session ID format")
-        
+
         approvals = await service.get_pending_approvals(session_uuid)
-        
+
         return [
             {
                 "id": str(a.id),
@@ -321,7 +319,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Approval not found")
 
         return summary
-    
+
     @app.post("/approvals/{approval_id}/approve")
     async def approve(
         approval_id: str,
@@ -354,7 +352,7 @@ def create_app() -> FastAPI:
             "state": updated.state.value if updated else "approved",
             "approved_by": request.user,
         }
-    
+
     @app.post("/approvals/{approval_id}/reject")
     async def reject(
         approval_id: str,
@@ -414,7 +412,7 @@ def create_app() -> FastAPI:
             "comment_count": len(updated.comments),
             "last_comment_author": request.author,
         }
-    
+
     return app
 
 
@@ -424,4 +422,5 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

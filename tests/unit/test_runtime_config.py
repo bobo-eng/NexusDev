@@ -1,7 +1,8 @@
 """Tests for runtime configuration wiring."""
 
-from apps.worker.main import Worker
 from core.storage.database import create_database
+
+from apps.worker.main import Worker
 
 
 def test_create_database_uses_explicit_url_over_env(monkeypatch):

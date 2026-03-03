@@ -14,19 +14,19 @@ from core.domain.stage import Stage
 
 class OpenWorkAdapter:
     """Adapter for OpenWork platform integration.
-    
+
     OpenWork uses a plugin architecture for extending functionality.
     This adapter maps NexusDev concepts to OpenWork plugin format.
-    
+
     Responsibilities:
     1. Map Session/Stage/Artifact to OpenWork plugin format
     2. Handle plugin parameter conversion
     3. Forward session context transparently
     """
-    
+
     def __init__(self, plugin_name: str = "nexusdev"):
         self.plugin_name = plugin_name
-    
+
     def to_plugin_format(
         self,
         session: Session,
@@ -34,12 +34,12 @@ class OpenWorkAdapter:
         artifacts: list[Artifact] | None = None,
     ) -> dict[str, Any]:
         """Convert NexusDev entities to OpenWork plugin format.
-        
+
         Args:
             session: Session entity
             stage: Optional stage entity
             artifacts: Optional list of artifacts
-            
+
         Returns:
             OpenWork plugin-compatible dictionary
         """
@@ -56,7 +56,7 @@ class OpenWorkAdapter:
                 },
             },
         }
-        
+
         if stage:
             plugin_data["task"] = {
                 "id": str(stage.id),
@@ -66,7 +66,7 @@ class OpenWorkAdapter:
                 "executor": stage.agent_name,
                 "order": stage.sequence,
             }
-        
+
         if artifacts:
             plugin_data["outputs"] = [
                 {
@@ -77,9 +77,9 @@ class OpenWorkAdapter:
                 }
                 for a in artifacts
             ]
-        
+
         return plugin_data
-    
+
     def from_plugin_result(
         self,
         plugin_result: dict[str, Any],
@@ -87,12 +87,12 @@ class OpenWorkAdapter:
         stage_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Convert OpenWork plugin result to NexusDev format.
-        
+
         Args:
             plugin_result: Result from OpenWork plugin execution
             session_id: Session ID
             stage_id: Optional stage ID
-            
+
         Returns:
             NexusDev-compatible result dictionary
         """
@@ -105,7 +105,7 @@ class OpenWorkAdapter:
             "logs": plugin_result.get("execution_logs", []),
             "metrics": plugin_result.get("performance", {}),
         }
-    
+
     def map_action_call(
         self,
         action_name: str,
@@ -113,12 +113,12 @@ class OpenWorkAdapter:
         workflow_context: dict[str, Any],
     ) -> dict[str, Any]:
         """Map an action call to OpenWork format.
-        
+
         Args:
             action_name: Name of the action
             action_params: Action parameters
             workflow_context: Workflow context
-            
+
         Returns:
             OpenWork action call format
         """
@@ -130,7 +130,7 @@ class OpenWorkAdapter:
                 "_workflow_context": workflow_context,
             },
         }
-    
+
     def extract_artifacts_from_plugin(
         self,
         plugin_output: dict[str, Any],
@@ -139,20 +139,20 @@ class OpenWorkAdapter:
         created_by: str = "openwork",
     ) -> list[Artifact]:
         """Extract artifacts from OpenWork plugin output.
-        
+
         Args:
             plugin_output: Plugin execution output
             session_id: Session ID
             stage_id: Stage ID
             created_by: Creator identifier
-            
+
         Returns:
             List of Artifact entities
         """
         from core.domain.artifact import ArtifactType
-        
+
         artifacts = []
-        
+
         for out_data in plugin_output.get("outputs", []):
             artifact = Artifact(
                 session_id=session_id,
@@ -168,12 +168,12 @@ class OpenWorkAdapter:
                 created_by=created_by,
             )
             artifacts.append(artifact)
-        
+
         return artifacts
-    
+
     def create_plugin_spec(self) -> dict[str, Any]:
         """Create OpenWork plugin specification for NexusDev.
-        
+
         Returns:
             Plugin specification dictionary
         """
@@ -223,16 +223,16 @@ class OpenWorkAdapter:
                 "retries": 3,
             },
         }
-    
+
     def to_openclaw_format(
         self,
         plugin_data: dict[str, Any],
     ) -> dict[str, Any]:
         """Convert OpenWork format to OpenClaw format (cross-platform).
-        
+
         Args:
             plugin_data: OpenWork plugin data
-            
+
         Returns:
             OpenClaw-compatible format
         """
@@ -254,7 +254,9 @@ class OpenWorkAdapter:
                 "status": plugin_data.get("task", {}).get("state"),
                 "agent": plugin_data.get("task", {}).get("executor"),
                 "sequence": plugin_data.get("task", {}).get("order"),
-            } if plugin_data.get("task") else None,
+            }
+            if plugin_data.get("task")
+            else None,
             "artifacts": [
                 {
                     "id": o.get("id"),

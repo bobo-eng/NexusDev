@@ -16,20 +16,20 @@ from core.domain.stage import Stage
 
 class OpenClawAdapter:
     """Adapter for OpenClaw platform integration.
-    
+
     OpenClaw is a skill/plugin-based platform for AI agents.
     This adapter maps NexusDev core concepts to OpenClaw's
     skill format without duplicating business logic.
-    
+
     Responsibilities:
     1. Map Session/Stage/Artifact to OpenClaw skill format
     2. Handle tool call parameter conversion
     3. Forward session context transparently
     """
-    
+
     def __init__(self, skill_name: str = "nexusdev"):
         self.skill_name = skill_name
-    
+
     def to_skill_format(
         self,
         session: Session,
@@ -37,12 +37,12 @@ class OpenClawAdapter:
         artifacts: list[Artifact] | None = None,
     ) -> dict[str, Any]:
         """Convert NexusDev entities to OpenClaw skill format.
-        
+
         Args:
             session: Session entity
             stage: Optional stage entity
             artifacts: Optional list of artifacts
-            
+
         Returns:
             OpenClaw skill-compatible dictionary
         """
@@ -57,7 +57,7 @@ class OpenClawAdapter:
                 "context": session.context,
             },
         }
-        
+
         if stage:
             skill_data["stage"] = {
                 "id": str(stage.id),
@@ -67,7 +67,7 @@ class OpenClawAdapter:
                 "agent": stage.agent_name,
                 "sequence": stage.sequence,
             }
-        
+
         if artifacts:
             skill_data["artifacts"] = [
                 {
@@ -78,9 +78,9 @@ class OpenClawAdapter:
                 }
                 for a in artifacts
             ]
-        
+
         return skill_data
-    
+
     def from_skill_result(
         self,
         skill_result: dict[str, Any],
@@ -88,12 +88,12 @@ class OpenClawAdapter:
         stage_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Convert OpenClaw skill result to NexusDev format.
-        
+
         Args:
             skill_result: Result from OpenClaw skill execution
             session_id: Session ID
             stage_id: Optional stage ID
-            
+
         Returns:
             NexusDev-compatible result dictionary
         """
@@ -106,7 +106,7 @@ class OpenClawAdapter:
             "logs": skill_result.get("logs", []),
             "metrics": skill_result.get("metrics", {}),
         }
-    
+
     def map_tool_call(
         self,
         tool_name: str,
@@ -114,12 +114,12 @@ class OpenClawAdapter:
         session_context: dict[str, Any],
     ) -> dict[str, Any]:
         """Map a tool call to OpenClaw format.
-        
+
         Args:
             tool_name: Name of the tool
             tool_params: Tool parameters
             session_context: Session context
-            
+
         Returns:
             OpenClaw tool call format
         """
@@ -131,7 +131,7 @@ class OpenClawAdapter:
                 "_session_context": session_context,
             },
         }
-    
+
     def extract_artifacts_from_skill(
         self,
         skill_output: dict[str, Any],
@@ -140,20 +140,20 @@ class OpenClawAdapter:
         created_by: str = "openclaw",
     ) -> list[Artifact]:
         """Extract artifacts from OpenClaw skill output.
-        
+
         Args:
             skill_output: Skill execution output
             session_id: Session ID
             stage_id: Stage ID
             created_by: Creator identifier
-            
+
         Returns:
             List of Artifact entities
         """
         from core.domain.artifact import ArtifactType
-        
+
         artifacts = []
-        
+
         for art_data in skill_output.get("artifacts", []):
             artifact = Artifact(
                 session_id=session_id,
@@ -169,12 +169,12 @@ class OpenClawAdapter:
                 created_by=created_by,
             )
             artifacts.append(artifact)
-        
+
         return artifacts
-    
+
     def create_skill_manifest(self) -> dict[str, Any]:
         """Create OpenClaw skill manifest for NexusDev.
-        
+
         Returns:
             Skill manifest dictionary
         """

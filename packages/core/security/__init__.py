@@ -1,6 +1,6 @@
 """Security utilities: sanitization, RBAC."""
 
-from .sanitizer import sanitize_content, Sanitizer
-from .rbac import Permission, Role, RBAC
+from .rbac import RBAC, Permission, Role
+from .sanitizer import Sanitizer, sanitize_content
 
 __all__ = ["sanitize_content", "Sanitizer", "Permission", "Role", "RBAC"]

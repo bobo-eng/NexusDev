@@ -1,6 +1,7 @@
 """Approval service for HITL workflow."""
 
 import logging
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from core.hitl.approval_sm import (
     ApprovalState,
     ApprovalStateMachine,
 )
+from core.observability.metrics import get_metrics
 from core.storage.database import Database
 from core.storage.repository import ApprovalRepository
 
@@ -18,26 +20,31 @@ logger = logging.getLogger(__name__)
 
 class ApprovalService:
     """Service for managing human approvals.
-    
+
     Provides:
     - Create approval requests
     - Process approvals/rejections
     - Query approval status
     - Handle timeouts
-    
+
     All approval records are persisted to the database.
     """
-    
+
     def __init__(self, database: Database):
         self.database = database
         # Cache for in-memory access (still needed for quick lookups)
         self._approval_cache: dict[UUID, ApprovalStateMachine] = {}
-    
+
+    def _calculate_wait_hours(self, requested_at: datetime) -> float:
+        """Calculate elapsed wait time in hours."""
+        delta = datetime.utcnow() - requested_at
+        return max(delta.total_seconds(), 0.0) / 3600.0
+
     async def _load_to_cache(self, approval_id: UUID) -> ApprovalStateMachine | None:
         """Load approval from DB to cache."""
         if approval_id in self._approval_cache:
             return self._approval_cache[approval_id]
-        
+
         async with self.database.session() as db_session:
             repo = ApprovalRepository(db_session)
             record = await repo.get_by_id(approval_id)
@@ -46,7 +53,7 @@ class ApprovalService:
                 self._approval_cache[approval_id] = sm
                 return sm
         return None
-    
+
     async def _save_to_db(self, sm: ApprovalStateMachine) -> None:
         """Save approval state machine to DB."""
         async with self.database.session() as db_session:
@@ -57,7 +64,7 @@ class ApprovalService:
                 await repo.update(sm.record)
             else:
                 await repo.create(sm.record)
-    
+
     async def create_approval(
         self,
         session_id: UUID,
@@ -69,7 +76,7 @@ class ApprovalService:
         artifact_ids: list[UUID] | None = None,
     ) -> ApprovalRecord:
         """Create a new approval request.
-        
+
         Args:
             session_id: Session ID
             stage_id: Stage ID
@@ -78,7 +85,7 @@ class ApprovalService:
             request_message: Request message
             timeout_hours: Timeout in hours
             artifact_ids: Related artifact IDs
-            
+
         Returns:
             Created approval record
         """
@@ -91,21 +98,21 @@ class ApprovalService:
             timeout_hours=timeout_hours,
             artifact_ids=artifact_ids or [],
         )
-        
+
         # Persist to database
         await self._save_to_db(sm)
-        
+
         # Cache in memory
         self._approval_cache[sm.record.id] = sm
-        
+
         logger.info(
             f"[Session {session_id}] Created approval {sm.record.id} for stage {stage_name}"
         )
-        
+
         # TODO: Send notification to approvers
-        
+
         return sm.record
-    
+
     async def approve(
         self,
         approval_id: UUID,
@@ -113,12 +120,12 @@ class ApprovalService:
         message: str = "",
     ) -> ApprovalRecord | None:
         """Approve a request.
-        
+
         Args:
             approval_id: Approval record ID
             approved_by: Who is approving
             message: Approval message
-            
+
         Returns:
             Updated record or None
         """
@@ -130,18 +137,23 @@ class ApprovalService:
         if not sm.can_transition(ApprovalAction.APPROVE):
             logger.error(f"Cannot approve approval {approval_id} in state {sm.record.state.value}")
             return None
-        
+
         sm.approve(approved_by, message)
-        
+
         # Persist to database
         await self._save_to_db(sm)
-        
+
+        get_metrics().record_approval(
+            approved=True,
+            wait_time_hours=self._calculate_wait_hours(sm.record.requested_at),
+        )
+
         logger.info(f"Approval {approval_id} approved by {approved_by}")
-        
+
         # TODO: Notify session service
-        
+
         return sm.record
-    
+
     async def reject(
         self,
         approval_id: UUID,
@@ -149,12 +161,12 @@ class ApprovalService:
         reason: str = "",
     ) -> ApprovalRecord | None:
         """Reject a request.
-        
+
         Args:
             approval_id: Approval record ID
             rejected_by: Who is rejecting
             reason: Rejection reason
-            
+
         Returns:
             Updated record or None
         """
@@ -166,18 +178,24 @@ class ApprovalService:
         if not sm.can_transition(ApprovalAction.REJECT):
             logger.error(f"Cannot reject approval {approval_id} in state {sm.record.state.value}")
             return None
-        
+
         sm.reject(rejected_by, reason)
-        
+
         # Persist to database
         await self._save_to_db(sm)
-        
+
+        get_metrics().record_approval(
+            approved=False,
+            rejected=True,
+            wait_time_hours=self._calculate_wait_hours(sm.record.requested_at),
+        )
+
         logger.info(f"Approval {approval_id} rejected by {rejected_by}")
-        
+
         # TODO: Notify session service
-        
+
         return sm.record
-    
+
     async def request_changes(
         self,
         approval_id: UUID,
@@ -185,12 +203,12 @@ class ApprovalService:
         message: str = "",
     ) -> ApprovalRecord | None:
         """Request changes without full rejection.
-        
+
         Args:
             approval_id: Approval record ID
             requested_by: Who is requesting changes
             message: Change request message
-            
+
         Returns:
             Updated record or None
         """
@@ -205,32 +223,32 @@ class ApprovalService:
             return None
 
         sm.request_changes(requested_by, message)
-        
+
         # Persist to database
         await self._save_to_db(sm)
-        
+
         return sm.record
-    
+
     async def get_approval(self, approval_id: UUID) -> ApprovalRecord | None:
         """Get approval record by ID."""
         # Try cache first
         if approval_id in self._approval_cache:
             return self._approval_cache[approval_id].record
-        
+
         # Load from DB
         async with self.database.session() as db_session:
             repo = ApprovalRepository(db_session)
             return await repo.get_by_id(approval_id)
-    
+
     async def get_pending_approvals(
         self,
         session_id: UUID | None = None,
     ) -> list[ApprovalRecord]:
         """Get all pending approvals.
-        
+
         Args:
             session_id: Filter by session (optional)
-            
+
         Returns:
             List of pending approval records
         """
@@ -240,7 +258,7 @@ class ApprovalService:
                 ApprovalState.PENDING.value,
                 session_id=session_id,
             )
-    
+
     async def get_session_approvals(
         self,
         session_id: UUID,
@@ -258,30 +276,35 @@ class ApprovalService:
         async with self.database.session() as db_session:
             repo = ApprovalRepository(db_session)
             return await repo.get_by_stage(stage_id)
-    
+
     async def check_timeouts(self) -> list[ApprovalRecord]:
         """Check and process timed out approvals.
-        
+
         Returns:
             List of timed out records
         """
         timed_out = []
-        
+
         # Get all pending approvals from DB
         async with self.database.session() as db_session:
             repo = ApprovalRepository(db_session)
             pending = await repo.get_by_state(ApprovalState.PENDING.value)
-        
+
         for record in pending:
             sm = ApprovalStateMachine(record)
             if sm.check_timeout():
                 timed_out.append(record)
                 # Persist timeout
                 await self._save_to_db(sm)
+                get_metrics().record_approval(
+                    approved=False,
+                    timed_out=True,
+                    wait_time_hours=self._calculate_wait_hours(record.requested_at),
+                )
                 logger.warning(f"Approval {record.id} timed out")
-        
+
         return timed_out
-    
+
     async def add_comment(
         self,
         approval_id: UUID,
@@ -290,33 +313,33 @@ class ApprovalService:
         is_internal: bool = False,
     ) -> ApprovalRecord | None:
         """Add comment to approval.
-        
+
         Args:
             approval_id: Approval record ID
             author: Comment author
             content: Comment content
             is_internal: Internal note flag
-            
+
         Returns:
             Updated record or None
         """
         sm = await self._load_to_cache(approval_id)
         if not sm:
             return None
-        
+
         sm.record.add_comment(author, content, is_internal)
-        
+
         # Persist to database
         await self._save_to_db(sm)
-        
+
         return sm.record
-    
+
     async def get_approval_summary(self, approval_id: UUID) -> dict[str, Any] | None:
         """Get human-readable approval summary."""
         record = await self.get_approval(approval_id)
         if not record:
             return None
-        
+
         return {
             "id": str(record.id),
             "session_id": str(record.session_id),

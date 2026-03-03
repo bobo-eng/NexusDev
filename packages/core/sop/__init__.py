@@ -1,6 +1,6 @@
 """MetaSOP - Standard Operating Procedure engine."""
 
-from .sop_engine import SOPEngine, SOPConfig, StageDefinition
+from .sop_engine import SOPConfig, SOPEngine, StageDefinition
 from .transitions import StageTransition, TransitionRule
 
 __all__ = [

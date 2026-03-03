@@ -10,37 +10,28 @@ from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from core.schemas.agent_outputs import (
-    RequirementAnalysisOutput,
-    SystemDesignOutput,
-    CodingOutput,
-    CodeReviewOutput,
-    TestingOutput,
-)
-
 T = TypeVar("T", bound=BaseModel)
 
 
 @dataclass
 class AgentConfig:
     """Configuration for an agent."""
-    
+
     name: str
     description: str = ""
     model_name: str = "gpt-4"
     temperature: float = 0.2
     max_retries: int = 3
     timeout_seconds: int = 300
-    
     # Provider settings
     provider: str = "openai"  # openai, anthropic
     api_key: str | None = None
     base_url: str | None = None
-    
+
     # Advanced settings
     context_window: int = 8000
     response_format: str = "json"
-    
+
     # Prompt versioning
     prompt_version: str = "1.0.0"
     schema_version: str = "1.0.0"
@@ -49,7 +40,7 @@ class AgentConfig:
 @dataclass
 class AgentExecutionMetadata:
     """Metadata for agent execution."""
-    
+
     agent_name: str
     prompt_version: str
     schema_version: str
@@ -63,24 +54,24 @@ class AgentExecutionMetadata:
 
 class BaseAgent(ABC):
     """Base class for all agents.
-    
+
     Provides common functionality:
     - LLM interaction with retry logic
     - Structured output parsing and validation
     - Error handling and recovery
     - Prompt versioning
     """
-    
+
     # Class-level version info
     PROMPT_VERSION: str = "1.0.0"
     SCHEMA_VERSION: str = "1.0.0"
-    
+
     def __init__(self, config: AgentConfig | None = None, llm: BaseChatModel | None = None):
         self.config = config or self._default_config()
         self._llm = llm
         self._output_parser = JsonOutputParser()
         self._execution_metadata: AgentExecutionMetadata | None = None
-    
+
     def _default_config(self) -> AgentConfig:
         """Get default agent configuration."""
         import os
@@ -95,27 +86,27 @@ class BaseAgent(ABC):
             temperature=0.2,
             timeout_seconds=120,
         )
-    
+
     @property
     def name(self) -> str:
         """Agent name."""
         return self.config.name
-    
+
     @property
     def llm(self) -> BaseChatModel:
         """Get or create LLM instance."""
         if self._llm is None:
             self._llm = self._create_llm()
         return self._llm
-    
+
     def _create_llm(self) -> BaseChatModel:
         """Create LLM instance based on config.
-        
+
         Uses JSON mode when available (OpenAI) for more reliable structured output.
         """
-        from langchain_openai import ChatOpenAI
         from langchain_anthropic import ChatAnthropic
-        
+        from langchain_openai import ChatOpenAI
+
         if self.config.provider == "anthropic":
             return ChatAnthropic(
                 model_name=self.config.model_name,
@@ -139,7 +130,7 @@ class BaseAgent(ABC):
                 model_kwargs={"response_format": {"type": "json_object"}},
                 extra_body=extra_body,
             )
-    
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
@@ -152,43 +143,43 @@ class BaseAgent(ABC):
         output_schema: type[T],
     ) -> T:
         """Call LLM with structured output.
-        
+
         Uses JSON mode when available for more reliable output.
         Falls back to regex extraction if needed.
-        
+
         Args:
             system_prompt: System instruction
             user_prompt: User input
             output_schema: Expected output schema class
-            
+
         Returns:
             Validated output object
-            
+
         Raises:
             ValidationError: If output doesn't match schema
             Exception: For LLM/API errors
         """
         import time
-        
+
         start_time = time.time()
-        
+
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
-        
+
         # Get response from LLM
         response = await self.llm.ainvoke(messages)
         content = response.content
-        
+
         if not isinstance(content, str):
             content = str(content)
-        
+
         execution_time_ms = (time.time() - start_time) * 1000
-        
+
         # Parse JSON
         parsed, _parse_method = self._parse_json(content)
-        
+
         # Validate against schema
         try:
             result = output_schema(**parsed)
@@ -199,7 +190,7 @@ class BaseAgent(ABC):
                 result = output_schema(**fixed)
             else:
                 raise
-        
+
         # Create metadata
         metadata = AgentExecutionMetadata(
             agent_name=self.name,
@@ -214,13 +205,13 @@ class BaseAgent(ABC):
 
         self._execution_metadata = metadata
         return result
-    
+
     def _parse_json(self, content: str) -> tuple[dict[str, Any], str]:
         """Parse JSON from LLM response.
-        
+
         Args:
             content: Raw LLM response
-            
+
         Returns:
             Tuple of (parsed dict, parse method used)
         """
@@ -228,29 +219,29 @@ class BaseAgent(ABC):
         import re
 
         cleaned_content = self._strip_reasoning_trace(content)
-        
+
         # Try direct parse first (works with JSON mode)
         try:
             return json.loads(cleaned_content), "direct"
         except json.JSONDecodeError:
             pass
-        
+
         # Try to extract JSON from markdown code blocks
-        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', cleaned_content, re.DOTALL)
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned_content, re.DOTALL)
         if json_match:
             try:
                 return json.loads(json_match.group(1)), "markdown_codeblock"
             except json.JSONDecodeError:
                 pass
-        
+
         # Try to find any JSON object
-        json_match = re.search(r'(\{.*\})', cleaned_content, re.DOTALL)
+        json_match = re.search(r"(\{.*\})", cleaned_content, re.DOTALL)
         if json_match:
             try:
                 return json.loads(json_match.group(1)), "regex_extract"
             except json.JSONDecodeError:
                 pass
-        
+
         raise ValueError(f"Could not parse JSON from response: {content[:200]}...")
 
     def _strip_reasoning_trace(self, content: str) -> str:
@@ -270,7 +261,7 @@ class BaseAgent(ABC):
             flags=re.DOTALL | re.IGNORECASE,
         )
         return cleaned.strip()
-    
+
     def _attempt_fix(
         self,
         data: dict[str, Any],
@@ -278,11 +269,11 @@ class BaseAgent(ABC):
     ) -> dict[str, Any] | None:
         """Attempt to fix common validation errors."""
         fixed = data.copy()
-        
+
         for err in error.errors():
             field_path = err.get("loc", ())
             error_type = err.get("type", "")
-            
+
             # Handle missing required fields
             if "missing" in error_type:
                 if field_path:
@@ -294,25 +285,25 @@ class BaseAgent(ABC):
                         fixed[field_name] = {}
                     else:
                         fixed[field_name] = ""
-        
+
         return fixed if fixed != data else None
-    
+
     @abstractmethod
     async def execute(self, context: dict[str, Any]) -> BaseModel:
         """Execute agent's main task.
-        
+
         Args:
             context: Execution context with inputs
-            
+
         Returns:
             Structured output matching agent's schema
         """
         pass
-    
+
     def get_system_prompt(self) -> str:
         """Get system prompt for this agent."""
         raise NotImplementedError
-    
+
     def format_context(self, context: dict[str, Any]) -> str:
         """Format context for LLM prompt."""
         lines = []
@@ -328,7 +319,7 @@ class BaseAgent(ABC):
             else:
                 lines.append(f"## {key}\n{value}")
         return "\n\n".join(lines)
-    
+
     def get_execution_metadata(self) -> AgentExecutionMetadata | None:
         """Get metadata from last execution."""
         return self._execution_metadata

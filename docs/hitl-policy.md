@@ -160,7 +160,8 @@ await approval_service.request_changes(
 
 **Approved**:
 - Session status → APPROVED
-- Workflow proceeds to next stage
+- Workflow can proceed to next stage automatically when
+  `HITL_AUTO_ADVANCE_AFTER_APPROVAL=true`
 - Audit trail updated
 
 **Rejected**:

@@ -231,6 +231,9 @@ CLI/API ──► SessionService.approve_stage()
             DB
 ```
 
+Optional behavior:
+- If `HITL_AUTO_ADVANCE_AFTER_APPROVAL=true`, approval triggers `run_stage()` for the next stage.
+
 ## Error Handling
 
 ### Retry Logic

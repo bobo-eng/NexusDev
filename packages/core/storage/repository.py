@@ -9,17 +9,17 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.domain.session import Session
-from core.domain.stage import Stage
 from core.domain.artifact import Artifact
 from core.domain.review import Review
+from core.domain.session import Session
+from core.domain.stage import Stage
 from core.hitl.approval_sm import ApprovalComment, ApprovalRecord, ApprovalState
 from core.storage.models import (
-    SessionModel,
-    StageModel,
+    ApprovalRecordModel,
     ArtifactModel,
     ReviewModel,
-    ApprovalRecordModel,
+    SessionModel,
+    StageModel,
 )
 
 T = TypeVar("T")
@@ -28,22 +28,22 @@ M = TypeVar("M")
 
 class BaseRepository(Generic[T, M]):
     """Base repository with common CRUD operations."""
-    
+
     def __init__(self, session: AsyncSession):
         self.session = session
-    
+
     async def get_by_id(self, id: UUID) -> T | None:
         """Get entity by ID."""
         raise NotImplementedError
-    
+
     async def create(self, entity: T) -> T:
         """Create new entity."""
         raise NotImplementedError
-    
+
     async def update(self, entity: T) -> T:
         """Update existing entity."""
         raise NotImplementedError
-    
+
     async def delete(self, id: UUID) -> bool:
         """Delete entity by ID."""
         raise NotImplementedError
@@ -51,15 +51,13 @@ class BaseRepository(Generic[T, M]):
 
 class SessionRepository(BaseRepository[Session, SessionModel]):
     """Repository for Session entities."""
-    
+
     async def get_by_id(self, id: UUID) -> Session | None:
         """Get session by ID."""
-        result = await self.session.execute(
-            select(SessionModel).where(SessionModel.id == id)
-        )
+        result = await self.session.execute(select(SessionModel).where(SessionModel.id == id))
         model = result.scalar_one_or_none()
         return Session.model_validate(model) if model else None
-    
+
     async def get_by_status(self, status: str) -> list[Session]:
         """Get sessions by status."""
         result = await self.session.execute(
@@ -67,7 +65,7 @@ class SessionRepository(BaseRepository[Session, SessionModel]):
         )
         models = result.scalars().all()
         return [Session.model_validate(m) for m in models]
-    
+
     async def get_all(self, limit: int = 100, offset: int = 0) -> list[Session]:
         """Get all sessions with pagination."""
         result = await self.session.execute(
@@ -78,7 +76,7 @@ class SessionRepository(BaseRepository[Session, SessionModel]):
         )
         models = result.scalars().all()
         return [Session.model_validate(m) for m in models]
-    
+
     async def create(self, entity: Session) -> Session:
         """Create new session."""
         model = SessionModel(
@@ -100,7 +98,7 @@ class SessionRepository(BaseRepository[Session, SessionModel]):
         self.session.add(model)
         await self.session.flush()
         return entity
-    
+
     async def update(self, entity: Session) -> Session:
         """Update existing session."""
         result = await self.session.execute(
@@ -118,12 +116,10 @@ class SessionRepository(BaseRepository[Session, SessionModel]):
             model.completed_at = entity.completed_at
             await self.session.flush()
         return entity
-    
+
     async def delete(self, id: UUID) -> bool:
         """Delete session by ID."""
-        result = await self.session.execute(
-            select(SessionModel).where(SessionModel.id == id)
-        )
+        result = await self.session.execute(select(SessionModel).where(SessionModel.id == id))
         model = result.scalar_one_or_none()
         if model:
             await self.session.delete(model)
@@ -134,15 +130,13 @@ class SessionRepository(BaseRepository[Session, SessionModel]):
 
 class StageRepository(BaseRepository[Stage, StageModel]):
     """Repository for Stage entities."""
-    
+
     async def get_by_id(self, id: UUID) -> Stage | None:
         """Get stage by ID."""
-        result = await self.session.execute(
-            select(StageModel).where(StageModel.id == id)
-        )
+        result = await self.session.execute(select(StageModel).where(StageModel.id == id))
         model = result.scalar_one_or_none()
         return Stage.model_validate(model) if model else None
-    
+
     async def get_by_session(self, session_id: UUID) -> list[Stage]:
         """Get all stages for a session."""
         result = await self.session.execute(
@@ -152,7 +146,7 @@ class StageRepository(BaseRepository[Stage, StageModel]):
         )
         models = result.scalars().all()
         return [Stage.model_validate(m) for m in models]
-    
+
     async def create(self, entity: Stage) -> Stage:
         """Create new stage."""
         model = StageModel(
@@ -183,17 +177,17 @@ class StageRepository(BaseRepository[Stage, StageModel]):
         self.session.add(model)
         await self.session.flush()
         return entity
-    
+
     async def update(self, entity: Stage) -> Stage:
         """Update existing stage."""
-        result = await self.session.execute(
-            select(StageModel).where(StageModel.id == entity.id)
-        )
+        result = await self.session.execute(select(StageModel).where(StageModel.id == entity.id))
         model = result.scalar_one_or_none()
         if model:
             model.name = entity.name
             model.status = entity.status.value
-            model.output_artifact_ids = [str(artifact_id) for artifact_id in entity.output_artifact_ids]
+            model.output_artifact_ids = [
+                str(artifact_id) for artifact_id in entity.output_artifact_ids
+            ]
             model.review_ids = [str(review_id) for review_id in entity.review_ids]
             model.context = entity.context
             model.result = entity.result
@@ -206,12 +200,10 @@ class StageRepository(BaseRepository[Stage, StageModel]):
             model.approval_comment = entity.approval_comment
             await self.session.flush()
         return entity
-    
+
     async def delete(self, id: UUID) -> bool:
         """Delete stage by ID."""
-        result = await self.session.execute(
-            select(StageModel).where(StageModel.id == id)
-        )
+        result = await self.session.execute(select(StageModel).where(StageModel.id == id))
         model = result.scalar_one_or_none()
         if model:
             await self.session.delete(model)
@@ -222,15 +214,13 @@ class StageRepository(BaseRepository[Stage, StageModel]):
 
 class ArtifactRepository(BaseRepository[Artifact, ArtifactModel]):
     """Repository for Artifact entities."""
-    
+
     async def get_by_id(self, id: UUID) -> Artifact | None:
         """Get artifact by ID."""
-        result = await self.session.execute(
-            select(ArtifactModel).where(ArtifactModel.id == id)
-        )
+        result = await self.session.execute(select(ArtifactModel).where(ArtifactModel.id == id))
         model = result.scalar_one_or_none()
         return Artifact.model_validate(model) if model else None
-    
+
     async def get_by_session(self, session_id: UUID) -> list[Artifact]:
         """Get all artifacts for a session."""
         result = await self.session.execute(
@@ -240,7 +230,7 @@ class ArtifactRepository(BaseRepository[Artifact, ArtifactModel]):
         )
         models = result.scalars().all()
         return [Artifact.model_validate(m) for m in models]
-    
+
     async def get_by_stage(self, stage_id: UUID) -> list[Artifact]:
         """Get all artifacts for a stage."""
         result = await self.session.execute(
@@ -250,7 +240,7 @@ class ArtifactRepository(BaseRepository[Artifact, ArtifactModel]):
         )
         models = result.scalars().all()
         return [Artifact.model_validate(m) for m in models]
-    
+
     async def create(self, entity: Artifact) -> Artifact:
         """Create new artifact."""
         model = ArtifactModel(
@@ -280,7 +270,7 @@ class ArtifactRepository(BaseRepository[Artifact, ArtifactModel]):
         self.session.add(model)
         await self.session.flush()
         return entity
-    
+
     async def update(self, entity: Artifact) -> Artifact:
         """Update existing artifact."""
         result = await self.session.execute(
@@ -300,12 +290,10 @@ class ArtifactRepository(BaseRepository[Artifact, ArtifactModel]):
             model.validation_result = entity.validation_result
             await self.session.flush()
         return entity
-    
+
     async def delete(self, id: UUID) -> bool:
         """Delete artifact by ID."""
-        result = await self.session.execute(
-            select(ArtifactModel).where(ArtifactModel.id == id)
-        )
+        result = await self.session.execute(select(ArtifactModel).where(ArtifactModel.id == id))
         model = result.scalar_one_or_none()
         if model:
             await self.session.delete(model)
@@ -316,15 +304,13 @@ class ArtifactRepository(BaseRepository[Artifact, ArtifactModel]):
 
 class ReviewRepository(BaseRepository[Review, ReviewModel]):
     """Repository for Review entities."""
-    
+
     async def get_by_id(self, id: UUID) -> Review | None:
         """Get review by ID."""
-        result = await self.session.execute(
-            select(ReviewModel).where(ReviewModel.id == id)
-        )
+        result = await self.session.execute(select(ReviewModel).where(ReviewModel.id == id))
         model = result.scalar_one_or_none()
         return Review.model_validate(model) if model else None
-    
+
     async def get_by_session(self, session_id: UUID) -> list[Review]:
         """Get all reviews for a session."""
         result = await self.session.execute(
@@ -334,7 +320,7 @@ class ReviewRepository(BaseRepository[Review, ReviewModel]):
         )
         models = result.scalars().all()
         return [Review.model_validate(m) for m in models]
-    
+
     async def get_by_stage(self, stage_id: UUID) -> list[Review]:
         """Get all reviews for a stage."""
         result = await self.session.execute(
@@ -344,7 +330,7 @@ class ReviewRepository(BaseRepository[Review, ReviewModel]):
         )
         models = result.scalars().all()
         return [Review.model_validate(m) for m in models]
-    
+
     async def create(self, entity: Review) -> Review:
         """Create new review."""
         model = ReviewModel(
@@ -373,12 +359,10 @@ class ReviewRepository(BaseRepository[Review, ReviewModel]):
         self.session.add(model)
         await self.session.flush()
         return entity
-    
+
     async def update(self, entity: Review) -> Review:
         """Update existing review."""
-        result = await self.session.execute(
-            select(ReviewModel).where(ReviewModel.id == entity.id)
-        )
+        result = await self.session.execute(select(ReviewModel).where(ReviewModel.id == entity.id))
         model = result.scalar_one_or_none()
         if model:
             model.status = entity.status.value
@@ -395,12 +379,10 @@ class ReviewRepository(BaseRepository[Review, ReviewModel]):
             model.completed_at = entity.completed_at
             await self.session.flush()
         return entity
-    
+
     async def delete(self, id: UUID) -> bool:
         """Delete review by ID."""
-        result = await self.session.execute(
-            select(ReviewModel).where(ReviewModel.id == id)
-        )
+        result = await self.session.execute(select(ReviewModel).where(ReviewModel.id == id))
         model = result.scalar_one_or_none()
         if model:
             await self.session.delete(model)
@@ -411,7 +393,7 @@ class ReviewRepository(BaseRepository[Review, ReviewModel]):
 
 class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
     """Repository for ApprovalRecord entities."""
-    
+
     async def get_by_id(self, id: UUID) -> ApprovalRecord | None:
         """Get approval record by ID."""
         result = await self.session.execute(
@@ -419,7 +401,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
         model = result.scalar_one_or_none()
         return self._model_to_record(model) if model else None
-    
+
     async def get_by_session(self, session_id: UUID) -> list[ApprovalRecord]:
         """Get all approval records for a session."""
         result = await self.session.execute(
@@ -429,7 +411,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
-    
+
     async def get_by_stage(self, stage_id: UUID) -> list[ApprovalRecord]:
         """Get all approval records for a stage."""
         result = await self.session.execute(
@@ -439,7 +421,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         )
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
-    
+
     async def get_by_state(
         self,
         state: str,
@@ -449,11 +431,11 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         query = select(ApprovalRecordModel).where(ApprovalRecordModel.state == state)
         if session_id:
             query = query.where(ApprovalRecordModel.session_id == session_id)
-        
+
         result = await self.session.execute(query)
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
-    
+
     async def create(self, entity: ApprovalRecord) -> ApprovalRecord:
         """Create new approval record."""
         model = ApprovalRecordModel(
@@ -480,7 +462,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
         self.session.add(model)
         await self.session.flush()
         return entity
-    
+
     async def update(self, entity: ApprovalRecord) -> ApprovalRecord:
         """Update existing approval record."""
         result = await self.session.execute(
@@ -500,7 +482,7 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
             model.meta = entity.metadata
             await self.session.flush()
         return entity
-    
+
     async def delete(self, id: UUID) -> bool:
         """Delete approval record by ID."""
         result = await self.session.execute(
@@ -512,14 +494,14 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
             await self.session.flush()
             return True
         return False
-    
+
     def _model_to_record(self, model: ApprovalRecordModel | None) -> ApprovalRecord | None:
         """Convert database model to domain entity."""
         if not model:
             return None
-        
+
         from uuid import UUID as PyUUID
-        
+
         state = (
             ApprovalState(model.state)
             if model.state in ApprovalState._value2member_map_
@@ -579,7 +561,8 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
     def _deserialize_comments(self, comments: list[dict]) -> list[ApprovalComment]:
         """Deserialize approval comments from database format."""
         from datetime import datetime
-        from uuid import UUID as PyUUID, uuid4
+        from uuid import UUID as PyUUID
+        from uuid import uuid4
 
         deserialized: list[ApprovalComment] = []
         for comment in comments:

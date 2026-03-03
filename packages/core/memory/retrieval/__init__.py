@@ -1,7 +1,7 @@
 """Memory retrieval mechanisms."""
 
-from .vector import VectorStore, SimpleVectorStore
 from .graph import GraphStore, SimpleGraphStore
+from .vector import SimpleVectorStore, VectorStore
 
 __all__ = [
     "VectorStore",
