@@ -93,6 +93,11 @@ def create_app() -> FastAPI:
     class RejectionRequest(BaseModel):
         reason: str
         user: str = "api-user"
+
+    class AddCommentRequest(BaseModel):
+        author: str = "api-user"
+        content: str = Field(..., min_length=1, max_length=5000)
+        is_internal: bool = False
     
     class StatusResponse(BaseModel):
         session_id: str
@@ -299,6 +304,23 @@ def create_app() -> FastAPI:
             }
             for a in approvals
         ]
+
+    @app.get("/approvals/{approval_id}")
+    async def get_approval(
+        approval_id: str,
+        service: ApprovalService = Depends(get_approval_service),
+    ):
+        """Get approval details."""
+        try:
+            uuid = UUID(approval_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid approval ID format")
+
+        summary = await service.get_approval_summary(uuid)
+        if not summary:
+            raise HTTPException(status_code=404, detail="Approval not found")
+
+        return summary
     
     @app.post("/approvals/{approval_id}/approve")
     async def approve(
@@ -364,6 +386,33 @@ def create_app() -> FastAPI:
             "id": approval_id,
             "state": updated.state.value if updated else "rejected",
             "rejected_by": request.user,
+        }
+
+    @app.post("/approvals/{approval_id}/comments")
+    async def add_comment(
+        approval_id: str,
+        request: AddCommentRequest,
+        service: ApprovalService = Depends(get_approval_service),
+    ):
+        """Add comment to an approval."""
+        try:
+            uuid = UUID(approval_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid approval ID format")
+
+        updated = await service.add_comment(
+            approval_id=uuid,
+            author=request.author,
+            content=request.content,
+            is_internal=request.is_internal,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Approval not found")
+
+        return {
+            "id": str(updated.id),
+            "comment_count": len(updated.comments),
+            "last_comment_author": request.author,
         }
     
     return app

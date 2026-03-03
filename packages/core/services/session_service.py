@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from core.agents.base import AgentConfig
+from core.config.settings import load_sop_config
 from core.domain.session import Session, SessionStatus
 from core.domain.stage import Stage, StageStatus, StageType
 from core.sop.sop_engine import SOPEngine, SOPConfig
@@ -17,6 +18,15 @@ from core.storage.repository import SessionRepository, StageRepository
 from core.workflow.graph import create_development_graph
 
 logger = logging.getLogger(__name__)
+
+
+def load_default_sop_config() -> SOPConfig:
+    """Load SOP config from YAML with safe fallback."""
+    try:
+        return SOPConfig.from_dict(load_sop_config())
+    except Exception as exc:
+        logger.warning(f"Failed to load SOP config from YAML: {exc}. Using default MVP SOP.")
+        return SOPEngine(SOPConfig()).create_default_mvp_sop()
 
 
 class SessionService:
@@ -33,7 +43,7 @@ class SessionService:
     def __init__(self, database: Database, sop_config: SOPConfig | None = None):
         self.database = database
         if sop_config is None:
-            sop_config = SOPEngine(SOPConfig()).create_default_mvp_sop()
+            sop_config = load_default_sop_config()
         self.sop_engine = SOPEngine(sop_config)
         self.workflow_graph = create_development_graph(self.sop_engine)
     

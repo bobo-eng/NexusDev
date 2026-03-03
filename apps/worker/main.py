@@ -9,6 +9,7 @@ Handles:
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -40,9 +41,21 @@ class Worker:
         self.approval_service = ApprovalService(self.database)
         self._running = False
         self._task: asyncio.Task | None = None
-        self._poll_interval = 5  # seconds
-        self._max_concurrent = 4
+        self._poll_interval = self._read_int_setting("WORKER_POLL_INTERVAL", 5)
+        self._max_concurrent = self._read_int_setting("WORKER_MAX_CONCURRENT", 4)
         self._semaphore = asyncio.Semaphore(self._max_concurrent)
+
+    def _read_int_setting(self, key: str, default: int) -> int:
+        """Read an integer setting from environment."""
+        value = os.getenv(key)
+        if value is None:
+            return default
+        try:
+            parsed = int(value)
+        except ValueError:
+            logger.warning(f"Invalid {key} value '{value}', using default {default}")
+            return default
+        return parsed if parsed > 0 else default
     
     async def start(self) -> None:
         """Start the worker."""

@@ -1,5 +1,6 @@
 """Database connection and session management."""
 
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -99,6 +100,9 @@ def create_database(
     Returns:
         Database instance
     """
+    if database_url is None:
+        database_url = os.getenv("DATABASE_URL")
+
     if database_url is None:
         # Default to SQLite in current directory
         database_url = "sqlite+aiosqlite:///./nexusdev.db"

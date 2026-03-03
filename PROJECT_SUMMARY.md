@@ -7,6 +7,15 @@ NexusDev is a **Multi-Agent Automated Development System** built with:
 - **MetaSOP** for stage definitions and transitions
 - **Pydantic v2** for structured data validation
 
+## Current Runtime Notes
+
+- `SessionService.run_stage()` currently executes one stage at a time by directly invoking the mapped agent.
+- LangGraph workflow definitions are available under `packages/core/workflow/` for full-graph orchestration scenarios.
+- SOP now loads from YAML by default (with fallback to built-in MVP config when YAML load fails).
+- API now supports approval detail and comment endpoints:
+  - `GET /approvals/{approval_id}`
+  - `POST /approvals/{approval_id}/comments`
+
 ## Project Structure
 
 ```
@@ -325,8 +334,8 @@ bash scripts/ci.sh
 
 ## Stats
 
-- **58 Python files**
-- **~5000 lines of code**
+- **72 Python files**
+- **~12,000 lines of code**
 - **100% syntax valid**
 - **5 AI agents**
 - **3-layer architecture** (core/adapters/apps)

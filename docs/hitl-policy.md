@@ -86,9 +86,14 @@ stages:
 
 ### Timeout Handling
 
-1. **Notification**: Reminder sent at 50% and 80% of timeout
-2. **Auto-escalation**: Escalate to next level on timeout
-3. **Auto-rejection**: Optionally auto-reject on timeout
+Current behavior:
+1. Worker periodically checks pending approvals for timeout
+2. Timed-out requests are marked `TIMED_OUT`
+
+Planned enhancements:
+1. Reminder notifications before timeout
+2. Auto-escalation policies by role/level
+3. Optional auto-rejection strategy
 
 ## Approval Workflow
 
@@ -180,13 +185,8 @@ await approval_service.request_changes(
 
 ### Escalation Process
 
-```python
-await approval_service.escalate(
-    approval_id=approval.id,
-    escalated_by="system",
-    reason="Timeout reached after 24 hours",
-)
-```
+Escalation is defined in the state machine and policy model, but API/service
+endpoints for escalation are not exposed yet.
 
 ## Audit Trail
 

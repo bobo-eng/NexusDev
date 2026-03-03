@@ -91,9 +91,13 @@ The approval state machine supports:
 - Comments with severity levels
 - Quality scores
 
-### Workflow Layer (LangGraph)
+### Workflow Layer (LangGraph + SessionService)
 
-The workflow graph defines stage transitions:
+The repository includes a complete LangGraph workflow definition for full
+orchestration scenarios, and the current runtime path executes one stage at a
+time through `SessionService.run_stage()` using SOP rules to choose the next stage.
+
+LangGraph graph definition example:
 
 ```python
 workflow.add_node("requirement_analysis", requirement_analysis_node)
@@ -188,13 +192,13 @@ class SessionService:
 CLI/API ──► SessionService.create_session() ──► SessionRepository ──► DB
 ```
 
-### 2. Stage Execution
+### 2. Stage Execution (Current Runtime)
 
 ```
 CLI/API ──► SessionService.run_stage()
                     │
                     ▼
-            LangGraph.invoke()
+     Determine next stage via SOP config
                     │
                     ▼
             Agent.execute()
@@ -208,6 +212,9 @@ CLI/API ──► SessionService.run_stage()
                     ▼
             DB
 ```
+
+Note: LangGraph nodes/routers are available in `packages/core/workflow/` but are
+not the default execution entrypoint in the current runtime path.
 
 ### 3. Human Approval
 
