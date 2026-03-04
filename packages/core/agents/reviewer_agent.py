@@ -1,3 +1,4 @@
+import os
 """Code Reviewer Agent."""
 
 from typing import Any
@@ -23,7 +24,7 @@ class ReviewerAgent(BaseAgent):
             config = AgentConfig(
                 name="reviewer_agent",
                 description="Code Reviewer - Quality Assurance",
-                model_name="gpt-4",
+                model_name=os.getenv("AGENT_MODEL", "MiniMax-M2.5"),
                 temperature=0.1,
             )
         super().__init__(config)

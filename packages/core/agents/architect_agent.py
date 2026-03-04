@@ -1,3 +1,4 @@
+import os
 """System Architect Agent for design."""
 
 from typing import Any
@@ -22,7 +23,7 @@ class ArchitectAgent(BaseAgent):
             config = AgentConfig(
                 name="architect_agent",
                 description="System Architect - Technical Design",
-                model_name="gpt-4",
+                model_name=os.getenv("AGENT_MODEL", "MiniMax-M2.5"),
                 temperature=0.2,
             )
         super().__init__(config)

@@ -87,7 +87,9 @@ You MUST respond with a valid JSON object matching this structure:
             "method": "POST",
             "description": "Create user",
             "request_schema": {},
-            "response_schema": {}
+            "response_schema": {},
+            "auth_required": true/false,
+            "module": "user_management"
         }
     ],
     "database_schema": [
@@ -98,6 +100,34 @@ You MUST respond with a valid JSON object matching this structure:
             "relationships": []
         }
     ],
+
+## API Design Requirements (IMPORTANT)
+You MUST design COMPLETE APIs for ALL modules. Do NOT just provide examples.
+The "api_specs" array MUST include ALL APIs from all modules.
+
+Required modules and their APIs:
+1. Authentication Module: login, logout, refresh, captcha, profile
+2. Organization Module: list, create, update, delete, tree, move
+3. User Management Module: list, create, update, delete, reset-password, assign-roles
+4. Role Management Module: list, create, update, delete, assign-permissions
+5. Permission Module: list, tree, assign
+6. Content Management Module: CRUD, publish, unpublish, version, search, archive
+7. Category Module: CRUD, tree, sort, move
+8. Site Module: CRUD, config, template, publish
+9. Media Module: upload, delete, preview, folder CRUD
+10. Workflow Module: create, update, delete, submit, approve, reject, task-list
+11. I18n Module: get-locale, set-locale, resources CRUD
+12. Config Module: get, update, dictionary CRUD
+13. Audit Module: list, export, statistics
+
+For each API, provide:
+- path: API path (e.g., /api/users)
+- method: HTTP method (GET/POST/PUT/DELETE)
+- description: What the API does
+- request_schema: Request parameters (all fields with types)
+- response_schema: Response structure
+- auth_required: Whether authentication is required
+- module: Which module this API belongs to
     "external_dependencies": ["Redis", "AWS S3"],
     "security_considerations": ["JWT auth", "Rate limiting"],
     "scalability_plan": "How to scale",

@@ -166,6 +166,22 @@ class SessionService:
                     StageStatus.PENDING, StageStatus.RUNNING, StageStatus.WAITING_APPROVAL
                 ]:
                     logger.info(f"[Session {session_id}] Stage {stage_type.value} already exists with status {existing.status.value}")
+                    
+                    # If PENDING, execute it (may have failed before)
+                    if existing.status == StageStatus.PENDING:
+                        logger.info(f"[Session {session_id}] Executing pending stage {existing.name}")
+                        stage = existing
+                        # Execute outside the creation transaction
+                        return await self._execute_workflow(session, stage, stage_def)
+                    
+                    # If RUNNING but no context/result (stuck), re-execute
+                    if existing.status == StageStatus.RUNNING:
+                        if not existing.context or not existing.result:
+                            logger.warning(f"[Session {session_id}] Stage {existing.name} is stuck (no context/result), re-executing")
+                            stage = existing
+                            return await self._execute_workflow(session, stage, stage_def)
+                    
+                    # If RUNNING or WAITING_APPROVAL, just return status
                     return {
                         "session_id": str(session_id),
                         "stage_id": str(existing.id),
@@ -173,7 +189,7 @@ class SessionService:
                         "stage_type": stage_type.value,
                         "status": existing.status.value,
                         "requires_approval": existing.requires_approval,
-                        "message": "Stage already exists",
+                        "message": f"Stage is {existing.status.value}",
                     }
             
             # Create stage
@@ -581,7 +597,7 @@ class SessionService:
             model_name = (
                 os.getenv("NEXUSDEV_LLM_MODEL")
                 or os.getenv("OPENAI_MODEL")
-                or "gpt-4o-mini"
+                or os.getenv("AGENT_MODEL", "MiniMax-M2.5")
             )
 
         temperature_map = {

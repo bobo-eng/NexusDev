@@ -1,3 +1,4 @@
+import os
 """QA Engineer Agent for testing."""
 
 from typing import Any
@@ -22,7 +23,7 @@ class TesterAgent(BaseAgent):
             config = AgentConfig(
                 name="tester_agent",
                 description="QA Engineer - Testing",
-                model_name="gpt-4",
+                model_name=os.getenv("AGENT_MODEL", "MiniMax-M2.5"),
                 temperature=0.2,
             )
         super().__init__(config)

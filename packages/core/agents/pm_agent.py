@@ -1,3 +1,4 @@
+import os
 """Product Manager Agent for requirement analysis."""
 
 from typing import Any
@@ -22,7 +23,7 @@ class PMAgent(BaseAgent):
             config = AgentConfig(
                 name="pm_agent",
                 description="Product Manager - Requirement Analysis",
-                model_name="gpt-4",
+                model_name=os.getenv("AGENT_MODEL", "MiniMax-M2.5"),
                 temperature=0.3,
             )
         super().__init__(config)

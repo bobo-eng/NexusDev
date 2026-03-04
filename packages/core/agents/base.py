@@ -30,7 +30,7 @@ class AgentConfig:
     model_name: str = "gpt-4"
     temperature: float = 0.2
     max_retries: int = 3
-    timeout_seconds: int = 120
+    timeout_seconds: int = 300
     
     # Provider settings
     provider: str = "openai"  # openai, anthropic
@@ -83,10 +83,17 @@ class BaseAgent(ABC):
     
     def _default_config(self) -> AgentConfig:
         """Get default agent configuration."""
+        import os
         return AgentConfig(
             name=self.__class__.__name__,
             prompt_version=self.PROMPT_VERSION,
             schema_version=self.SCHEMA_VERSION,
+            provider="openai",
+            model_name=os.getenv("AGENT_MODEL", "MiniMax-M2.5"),
+            base_url=os.getenv("OPENAI_BASE_URL", "https://api.minimax.chat/v1"),
+            api_key=os.getenv("OPENAI_API_KEY", ""),
+            temperature=0.2,
+            timeout_seconds=120,
         )
     
     @property

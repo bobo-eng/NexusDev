@@ -11,12 +11,13 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from core.domain.session import SessionStatus
 from core.services.session_service import SessionService
 from core.services.approval_service import ApprovalService
+import os
 from core.storage.database import Database, create_database
 
 
@@ -28,7 +29,8 @@ async def get_db() -> Database:
     """Get database instance."""
     global _db
     if _db is None:
-        _db = create_database()
+        database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./nexusdev.db")
+        _db = create_database(database_url)
         await _db.create_tables()
     return _db
 
@@ -82,6 +84,7 @@ def create_app() -> FastAPI:
     
     class RunStageRequest(BaseModel):
         stage_type: str | None = None
+        background: bool = Field(default=False, description="Run in background without waiting for completion")
     
     class ApprovalRequest(BaseModel):
         message: str = ""
@@ -183,15 +186,32 @@ def create_app() -> FastAPI:
     @app.post("/sessions/{session_id}/run")
     async def run_stage(
         session_id: str,
+        background_tasks: BackgroundTasks,
         request: RunStageRequest | None = None,
         service: SessionService = Depends(get_session_service),
     ):
-        """Run a workflow stage."""
+        """Run a workflow stage.
+        
+        Set background=true to run asynchronously and return immediately.
+        """
         try:
             uuid = UUID(session_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid session ID format")
         
+        # Check if background execution is requested
+        is_background = request.background if request else False
+        
+        if is_background:
+            # Run in background - schedule the task and return immediately
+            background_tasks.add_task(service.run_stage, uuid, request.stage_type if request else None)
+            return {
+                "status": "queued",
+                "message": "Stage execution started in background",
+                "session_id": session_id,
+            }
+        
+        # Synchronous execution (original behavior)
         stage_type = request.stage_type if request else None
         result = await service.run_stage(uuid, stage_type)
         

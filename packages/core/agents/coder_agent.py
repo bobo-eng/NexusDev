@@ -1,3 +1,4 @@
+import os
 """Coder Agent for implementation."""
 
 from typing import Any
@@ -22,7 +23,7 @@ class CoderAgent(BaseAgent):
             config = AgentConfig(
                 name="coder_agent",
                 description="Software Engineer - Code Implementation",
-                model_name="gpt-4",
+                model_name=os.getenv("AGENT_MODEL", "MiniMax-M2.5"),
                 temperature=0.1,
             )
         super().__init__(config)
