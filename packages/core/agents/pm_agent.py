@@ -1,6 +1,6 @@
-import os
 """Product Manager Agent for requirement analysis."""
 
+import os
 from typing import Any
 
 from core.agents.base import AgentConfig, BaseAgent

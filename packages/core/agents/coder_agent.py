@@ -1,6 +1,6 @@
-import os
 """Coder Agent for implementation."""
 
+import os
 from typing import Any
 
 from core.agents.base import AgentConfig, BaseAgent

@@ -7,12 +7,11 @@ Provides REST endpoints for:
 - Status queries
 """
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
-
-import os
 
 from core.domain.session import SessionStatus
 from core.hitl.approval_sm import ApprovalState
@@ -107,6 +106,7 @@ def create_app() -> FastAPI:
     class RunStageRequest(BaseModel):
         stage_type: str | None = None
         background: bool = Field(default=False, description="Run in background without waiting for completion")
+
     class ApprovalRequest(BaseModel):
         message: str = ""
         user: str = "api-user"
@@ -244,7 +244,7 @@ def create_app() -> FastAPI:
         service: SessionServiceDep,
     ):
         """Run a workflow stage.
-        
+
         Set background=true to run asynchronously and return immediately.
         """
         try:
@@ -254,7 +254,7 @@ def create_app() -> FastAPI:
 
         # Check if background execution is requested
         is_background = request.background if request else False
-        
+
         if is_background:
             # Run in background - schedule the task and return immediately
             background_tasks.add_task(service.run_stage, uuid, request.stage_type if request else None)
@@ -263,7 +263,7 @@ def create_app() -> FastAPI:
                 "message": "Stage execution started in background",
                 "session_id": session_id,
             }
-        
+
         # Synchronous execution (original behavior)
         stage_type = request.stage_type if request else None
         result = await service.run_stage(uuid, stage_type)

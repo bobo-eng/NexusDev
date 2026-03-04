@@ -195,8 +195,11 @@ await approval_service.request_changes(
 
 ### Escalation Process
 
-Escalation is defined in the state machine and policy model, but API/service
-endpoints for escalation are not exposed yet.
+Escalation is defined in the state machine and policy model and is exposed via
+API/service endpoints:
+- `POST /approvals/{approval_id}/escalate`
+- `POST /approvals/{approval_id}/cancel`
+- `POST /approvals/{approval_id}/remind`
 
 ## Audit Trail
 

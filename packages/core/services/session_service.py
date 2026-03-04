@@ -196,21 +196,20 @@ class SessionService:
                     StageStatus.WAITING_APPROVAL,
                 ]:
                     logger.info(f"[Session {session_id}] Stage {stage_type.value} already exists with status {existing.status.value}")
-                    
+
                     # If PENDING, execute it (may have failed before)
                     if existing.status == StageStatus.PENDING:
                         logger.info(f"[Session {session_id}] Executing pending stage {existing.name}")
                         stage = existing
                         # Execute outside the creation transaction
                         return await self._execute_workflow(session, stage, stage_def)
-                    
+
                     # If RUNNING but no context/result (stuck), re-execute
-                    if existing.status == StageStatus.RUNNING:
-                        if not existing.context or not existing.result:
-                            logger.warning(f"[Session {session_id}] Stage {existing.name} is stuck (no context/result), re-executing")
-                            stage = existing
-                            return await self._execute_workflow(session, stage, stage_def)
-                    
+                    if existing.status == StageStatus.RUNNING and (not existing.context or not existing.result):
+                        logger.warning(f"[Session {session_id}] Stage {existing.name} is stuck (no context/result), re-executing")
+                        stage = existing
+                        return await self._execute_workflow(session, stage, stage_def)
+
                     # If RUNNING or WAITING_APPROVAL, just return status
                     return {
                         "session_id": str(session_id),

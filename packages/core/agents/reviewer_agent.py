@@ -1,6 +1,6 @@
-import os
 """Code Reviewer Agent."""
 
+import os
 from typing import Any
 
 from core.agents.base import AgentConfig, BaseAgent

@@ -1,6 +1,6 @@
-import os
 """System Architect Agent for design."""
 
+import os
 from typing import Any
 
 from core.agents.base import AgentConfig, BaseAgent
