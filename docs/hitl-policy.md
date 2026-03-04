@@ -97,9 +97,10 @@ Current behavior:
    - webhook (`HITL_WEBHOOK_URL`)
    - email (`HITL_SMTP_URL` + `HITL_EMAIL_TO`)
    - dashboard webhook (`HITL_DASHBOARD_WEBHOOK_URL`)
+4. Timeout analytics are available via `GET /approvals/analytics/timeouts`
 
 Planned enhancements:
-1. Rich timeout analytics
+1. Advanced timeout trend dashboards/alerting
 
 Current timeout controls (env):
 - `HITL_REMINDER_HOURS_BEFORE_TIMEOUT`
@@ -387,6 +388,11 @@ POST /approvals/{approval_id}/remind
     "user": "tech_lead",
     "message": "Reminder: approval is due today"
 }
+```
+
+### Timeout Analytics
+```
+GET /approvals/analytics/timeouts?days=7&user=api-user
 ```
 
 ## Future Enhancements

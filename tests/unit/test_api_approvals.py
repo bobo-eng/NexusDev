@@ -1,8 +1,10 @@
 """API tests for approval endpoints."""
 
+import asyncio
 from uuid import uuid4
 
 import pytest
+from core.config.settings import get_settings
 from core.services.approval_service import ApprovalService
 from httpx import ASGITransport, AsyncClient
 
@@ -312,3 +314,40 @@ async def test_list_approvals_invalid_state(api_client: AsyncClient) -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid approval state"
+
+
+@pytest.mark.asyncio
+async def test_get_timeout_analytics(api_client: AsyncClient, monkeypatch) -> None:
+    monkeypatch.setenv("HITL_AUTO_ESCALATE_ON_TIMEOUT", "false")
+    monkeypatch.setenv("HITL_AUTO_REJECT_ON_TIMEOUT", "false")
+    get_settings.cache_clear()
+
+    db = await api_main.get_db()
+    service = ApprovalService(db)
+
+    await service.create_approval(
+        session_id=uuid4(),
+        stage_id=uuid4(),
+        stage_name="system_design",
+        requested_by="system",
+        timeout_hours=0,
+        approvers=["tech_lead"],
+    )
+
+    await asyncio.sleep(0.01)
+    await service.check_timeouts()
+
+    response = await api_client.get(
+        "/approvals/analytics/timeouts",
+        params={"days": 1, "user": "api-user"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["window_days"] == 1
+    assert payload["total_records"] >= 1
+    assert payload["timeout_related_count"] >= 1
+    assert "by_stage" in payload
+    assert "by_role" in payload
+
+    get_settings.cache_clear()

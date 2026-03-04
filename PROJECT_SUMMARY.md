@@ -26,6 +26,7 @@ NexusDev is a **Multi-Agent Automated Development System** built with:
 - Approval lifecycle now emits notification events via configurable channels (log/webhook/email/dashboard webhook).
 - Timeout handling supports pre-timeout reminders and optional auto-escalate/auto-reject policies.
 - Escalation now supports role/level routing (`HITL_ESCALATION_POLICY_ENABLED`, `HITL_ESCALATION_LEVELS`).
+- Timeout analytics endpoint added: `GET /approvals/analytics/timeouts` (by stage/by role/timeout rates).
 - Session recovery endpoint/service added for manual recovery from `failed`/`rejected` states.
 - Approval listing supports state filter and pagination.
 - Workflow `wait_for_approval_node` now reads approval state from DB (no longer pure placeholder).

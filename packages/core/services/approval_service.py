@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -79,6 +79,105 @@ class ApprovalService:
         if not record.timeout_at:
             return None
         return (record.timeout_at - datetime.utcnow()).total_seconds() / 3600.0
+
+    @staticmethod
+    def _parse_history_time(entry: dict[str, Any]) -> datetime | None:
+        """Parse history timestamp entry."""
+        raw = entry.get("timestamp")
+        if not isinstance(raw, str):
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _history_message(entry: dict[str, Any]) -> str:
+        """Get normalized history message."""
+        details = entry.get("details", {})
+        if not isinstance(details, dict):
+            return ""
+        return str(details.get("message", "")).strip()
+
+    def _is_timeout_related(self, record: ApprovalRecord) -> bool:
+        """Check whether approval finished due to timeout path."""
+        if record.state == ApprovalState.TIMED_OUT:
+            return True
+
+        for entry in record.history:
+            if not isinstance(entry, dict):
+                continue
+            action = str(entry.get("action", "")).lower()
+            message = self._history_message(entry).lower()
+            if action == "timeout":
+                return True
+            if action in {"escalate", "reject"} and "timed out" in message:
+                return True
+
+        return False
+
+    def _is_auto_escalated(self, record: ApprovalRecord) -> bool:
+        """Check if approval was auto-escalated due to timeout."""
+        for entry in record.history:
+            if not isinstance(entry, dict):
+                continue
+            action = str(entry.get("action", "")).lower()
+            message = self._history_message(entry).lower()
+            if action == "escalate" and "auto-escalated" in message:
+                return True
+        return False
+
+    def _is_auto_rejected(self, record: ApprovalRecord) -> bool:
+        """Check if approval was auto-rejected due to timeout."""
+        for entry in record.history:
+            if not isinstance(entry, dict):
+                continue
+            action = str(entry.get("action", "")).lower()
+            message = self._history_message(entry).lower()
+            if action == "reject" and "auto-rejected" in message:
+                return True
+        return False
+
+    def _timeout_wait_hours(self, record: ApprovalRecord) -> float:
+        """Compute wait hours before timeout event."""
+        start = record.requested_at
+        if record.timeout_at:
+            return max((record.timeout_at - start).total_seconds(), 0.0) / 3600.0
+
+        timeout_event_time: datetime | None = None
+        for entry in record.history:
+            if not isinstance(entry, dict):
+                continue
+            action = str(entry.get("action", "")).lower()
+            message = self._history_message(entry).lower()
+            if action == "timeout" or (
+                action in {"escalate", "reject"} and "timed out" in message
+            ):
+                timeout_event_time = self._parse_history_time(entry)
+                if timeout_event_time:
+                    break
+
+        if timeout_event_time is None:
+            timeout_event_time = datetime.utcnow()
+
+        return max((timeout_event_time - start).total_seconds(), 0.0) / 3600.0
+
+    def _get_approver_roles(self, record: ApprovalRecord) -> set[str]:
+        """Get approver role set for analytics aggregation."""
+        roles: set[str] = set()
+        for approver in self._get_approvers(record):
+            role_name = self._get_user_role_name(approver)
+            if role_name:
+                roles.add(role_name)
+
+        if roles:
+            return roles
+
+        requester_role = self._get_user_role_name(record.requested_by)
+        if requester_role:
+            return {requester_role}
+
+        return {"unknown"}
 
     def _is_escalation_policy_enabled(self) -> bool:
         """Check whether role/level escalation policy is enabled."""
@@ -789,6 +888,123 @@ class ApprovalService:
                 limit=limit,
                 offset=offset,
             )
+
+    async def get_timeout_analytics(
+        self,
+        days: int = 7,
+        session_id: UUID | None = None,
+        stage_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Get timeout analytics aggregated by stage and role."""
+        now = datetime.utcnow()
+        window_days = max(days, 1)
+        since = now - timedelta(days=window_days)
+
+        async with self.database.session() as db_session:
+            repo = ApprovalRepository(db_session)
+            records = await repo.list_for_analytics(
+                since=since,
+                until=now,
+                session_id=session_id,
+                stage_name=stage_name,
+            )
+
+        total_records = len(records)
+        timeout_records = [record for record in records if self._is_timeout_related(record)]
+        timeout_count = len(timeout_records)
+        auto_escalated_count = sum(1 for record in records if self._is_auto_escalated(record))
+        auto_rejected_count = sum(1 for record in records if self._is_auto_rejected(record))
+
+        timeout_wait_samples = [self._timeout_wait_hours(record) for record in timeout_records]
+        avg_timeout_wait = (
+            sum(timeout_wait_samples) / len(timeout_wait_samples) if timeout_wait_samples else 0.0
+        )
+
+        stage_stats: dict[str, dict[str, Any]] = {}
+        for record in records:
+            stage = record.stage_name or "unknown"
+            bucket = stage_stats.setdefault(
+                stage,
+                {
+                    "stage_name": stage,
+                    "total": 0,
+                    "timeout_related": 0,
+                    "timeout_wait_samples": [],
+                },
+            )
+            bucket["total"] += 1
+            if self._is_timeout_related(record):
+                bucket["timeout_related"] += 1
+                bucket["timeout_wait_samples"].append(self._timeout_wait_hours(record))
+
+        by_stage: list[dict[str, Any]] = []
+        for stage_name_key in sorted(stage_stats):
+            bucket = stage_stats[stage_name_key]
+            wait_samples = bucket.pop("timeout_wait_samples")
+            timeout_related = bucket["timeout_related"]
+            total = bucket["total"]
+            by_stage.append(
+                {
+                    "stage_name": stage_name_key,
+                    "total": total,
+                    "timeout_related": timeout_related,
+                    "timeout_rate": timeout_related / total if total > 0 else 0.0,
+                    "avg_wait_hours_before_timeout": (
+                        sum(wait_samples) / len(wait_samples) if wait_samples else 0.0
+                    ),
+                }
+            )
+
+        role_stats: dict[str, dict[str, Any]] = {}
+        for record in records:
+            roles = self._get_approver_roles(record)
+            timeout_related = self._is_timeout_related(record)
+            for role_name in roles:
+                bucket = role_stats.setdefault(
+                    role_name,
+                    {
+                        "role": role_name,
+                        "total": 0,
+                        "timeout_related": 0,
+                    },
+                )
+                bucket["total"] += 1
+                if timeout_related:
+                    bucket["timeout_related"] += 1
+
+        by_role = [
+            {
+                "role": role_name,
+                "total": bucket["total"],
+                "timeout_related": bucket["timeout_related"],
+                "timeout_rate": (
+                    bucket["timeout_related"] / bucket["total"] if bucket["total"] > 0 else 0.0
+                ),
+            }
+            for role_name, bucket in sorted(role_stats.items())
+        ]
+
+        return {
+            "generated_at": now.isoformat(),
+            "window_days": window_days,
+            "since": since.isoformat(),
+            "until": now.isoformat(),
+            "filters": {
+                "session_id": str(session_id) if session_id else None,
+                "stage_name": stage_name,
+            },
+            "total_records": total_records,
+            "timeout_related_count": timeout_count,
+            "timeout_state_count": sum(
+                1 for record in records if record.state == ApprovalState.TIMED_OUT
+            ),
+            "auto_escalated_count": auto_escalated_count,
+            "auto_rejected_count": auto_rejected_count,
+            "timeout_rate": (timeout_count / total_records if total_records > 0 else 0.0),
+            "avg_wait_hours_before_timeout": avg_timeout_wait,
+            "by_stage": by_stage,
+            "by_role": by_role,
+        }
 
     async def get_session_approvals(
         self,

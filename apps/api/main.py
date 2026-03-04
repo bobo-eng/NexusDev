@@ -403,6 +403,33 @@ def create_app() -> FastAPI:
             for a in approvals
         ]
 
+    @app.get("/approvals/analytics/timeouts")
+    async def get_timeout_analytics(
+        user: str = "api-user",
+        days: int = 7,
+        session_id: str | None = None,
+        stage_name: str | None = None,
+        *,
+        service: ApprovalServiceDep,
+    ):
+        """Get timeout analytics for approvals."""
+        _ensure_permission(user, Permission.APPROVAL_READ)
+
+        days = max(1, min(days, 365))
+
+        session_uuid = None
+        if session_id:
+            try:
+                session_uuid = UUID(session_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid session ID format") from None
+
+        return await service.get_timeout_analytics(
+            days=days,
+            session_id=session_uuid,
+            stage_name=stage_name,
+        )
+
     @app.get("/approvals/{approval_id}")
     async def get_approval(
         approval_id: str,

@@ -3,6 +3,7 @@
 Provides clean abstraction over database operations.
 """
 
+from datetime import datetime
 from typing import Generic, TypeVar
 from uuid import UUID
 
@@ -451,6 +452,28 @@ class ApprovalRepository(BaseRepository[ApprovalRecord, ApprovalRecordModel]):
             query = query.where(ApprovalRecordModel.session_id == session_id)
 
         query = query.order_by(ApprovalRecordModel.requested_at.desc()).limit(limit).offset(offset)
+        result = await self.session.execute(query)
+        models = result.scalars().all()
+        return [self._model_to_record(m) for m in models if m]
+
+    async def list_for_analytics(
+        self,
+        since: datetime,
+        until: datetime,
+        session_id: UUID | None = None,
+        stage_name: str | None = None,
+    ) -> list[ApprovalRecord]:
+        """List approvals in a time window for analytics."""
+        query = select(ApprovalRecordModel).where(
+            ApprovalRecordModel.requested_at >= since,
+            ApprovalRecordModel.requested_at <= until,
+        )
+        if session_id:
+            query = query.where(ApprovalRecordModel.session_id == session_id)
+        if stage_name:
+            query = query.where(ApprovalRecordModel.stage_name == stage_name)
+
+        query = query.order_by(ApprovalRecordModel.requested_at.desc())
         result = await self.session.execute(query)
         models = result.scalars().all()
         return [self._model_to_record(m) for m in models if m]
