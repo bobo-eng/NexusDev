@@ -99,8 +99,7 @@ Current behavior:
    - dashboard webhook (`HITL_DASHBOARD_WEBHOOK_URL`)
 
 Planned enhancements:
-1. Advanced escalation policies by role/level
-2. Rich timeout analytics
+1. Rich timeout analytics
 
 Current timeout controls (env):
 - `HITL_REMINDER_HOURS_BEFORE_TIMEOUT`
@@ -204,6 +203,18 @@ API/service endpoints:
 - `POST /approvals/{approval_id}/escalate`
 - `POST /approvals/{approval_id}/cancel`
 - `POST /approvals/{approval_id}/remind`
+
+### Role/Level Routing
+
+Escalation now supports optional role/level routing:
+
+- `HITL_ESCALATION_POLICY_ENABLED` (default `true`)
+- `HITL_ESCALATION_LEVELS` (default `developer,tech_lead,admin`)
+
+When enabled, an escalation action attempts to route approval ownership to the
+next higher role in the configured level chain (based on RBAC role resolution).
+If matching higher-level approvers exist, runtime approvers are narrowed to that
+target set for subsequent actions.
 
 ## Audit Trail
 

@@ -17,7 +17,7 @@ from core.hitl.approval_sm import (
     ApprovalStateMachine,
 )
 from core.observability.metrics import get_metrics
-from core.security.rbac import Permission, get_rbac
+from core.security.rbac import ROLES, Permission, get_rbac
 from core.storage.database import Database
 from core.storage.repository import ApprovalRepository
 
@@ -79,6 +79,122 @@ class ApprovalService:
         if not record.timeout_at:
             return None
         return (record.timeout_at - datetime.utcnow()).total_seconds() / 3600.0
+
+    def _is_escalation_policy_enabled(self) -> bool:
+        """Check whether role/level escalation policy is enabled."""
+        try:
+            return bool(get_settings().hitl.escalation_policy_enabled)
+        except Exception:
+            return True
+
+    def _get_escalation_levels(self) -> list[str]:
+        """Get normalized escalation role levels."""
+        default_levels = ["developer", "tech_lead", "admin"]
+        try:
+            raw_levels = get_settings().hitl.escalation_levels
+        except Exception:
+            raw_levels = ",".join(default_levels)
+
+        levels: list[str] = []
+        for item in raw_levels.split(","):
+            role_name = self._normalize_actor(item)
+            if role_name in ROLES and role_name not in levels:
+                levels.append(role_name)
+
+        if levels:
+            return levels
+
+        return [role for role in default_levels if role in ROLES]
+
+    def _get_user_role_name(self, user_id: str) -> str | None:
+        """Resolve normalized RBAC role name for user."""
+        role = get_rbac().get_user_role(user_id)
+        if not role:
+            return None
+        return self._normalize_actor(role.name)
+
+    def _resolve_escalation_route(
+        self,
+        record: ApprovalRecord,
+        escalated_by: str,
+    ) -> dict[str, Any] | None:
+        """Resolve next escalation target role and approvers."""
+        approvers = self._get_approvers(record)
+        if not approvers:
+            return None
+
+        actor_role = self._get_user_role_name(escalated_by)
+        if not actor_role:
+            return None
+
+        levels = self._get_escalation_levels()
+        if actor_role not in levels:
+            return None
+
+        actor_index = levels.index(actor_role)
+        higher_roles = levels[actor_index + 1 :]
+        if not higher_roles:
+            return None
+
+        approver_roles: dict[str, str] = {}
+        for approver in approvers:
+            role_name = self._get_user_role_name(approver)
+            if role_name:
+                approver_roles[approver] = role_name
+
+        for target_role in higher_roles:
+            targets = [
+                approver
+                for approver, role_name in approver_roles.items()
+                if role_name == target_role
+            ]
+            if targets:
+                return {
+                    "from_role": actor_role,
+                    "to_role": target_role,
+                    "targets": targets,
+                    "levels": levels,
+                }
+
+        return None
+
+    def _apply_escalation_policy(
+        self,
+        record: ApprovalRecord,
+        escalated_by: str,
+        reason: str = "",
+    ) -> None:
+        """Apply role/level escalation routing for approvers."""
+        if not self._is_escalation_policy_enabled():
+            return
+
+        route = self._resolve_escalation_route(record, escalated_by)
+        if not route:
+            return
+
+        previous_approvers = self._get_approvers(record)
+        record.metadata["approvers"] = route["targets"]
+        record.metadata["escalation_policy"] = {
+            "from_role": route["from_role"],
+            "to_role": route["to_role"],
+            "targets": route["targets"],
+            "levels": route["levels"],
+            "reason": reason,
+            "escalated_by": escalated_by,
+            "escalated_at": datetime.utcnow().isoformat(),
+        }
+        record.metadata["escalation_level"] = route["levels"].index(route["to_role"])
+
+        record.add_history(
+            action="escalation_routed",
+            actor="system",
+            details={
+                "from_role": route["from_role"],
+                "to_role": route["to_role"],
+                "previous_approvers": previous_approvers,
+                "new_approvers": route["targets"],
+            },
+        )
 
     def _parse_notification_channels(self) -> set[str]:
         """Parse notification channels from environment."""
@@ -542,6 +658,7 @@ class ApprovalService:
             return None
 
         sm.escalate(escalated_by, reason)
+        self._apply_escalation_policy(sm.record, escalated_by=escalated_by, reason=reason)
         await self._save_to_db(sm)
         logger.info(f"Approval {approval_id} escalated by {escalated_by}")
         await self._send_notification(
@@ -753,6 +870,11 @@ class ApprovalService:
 
             if auto_escalate and sm.can_transition(ApprovalAction.ESCALATE):
                 sm.escalate("system", "Timed out; auto-escalated")
+                self._apply_escalation_policy(
+                    sm.record,
+                    escalated_by="system",
+                    reason="Timed out; auto-escalated",
+                )
                 timed_out.append(sm.record)
                 await self._save_to_db(sm)
                 get_metrics().record_approval(
@@ -866,4 +988,5 @@ class ApprovalService:
             "is_pending": record.is_pending(),
             "is_resolved": record.is_resolved(),
             "comment_count": len(record.comments),
+            "escalation_policy": record.metadata.get("escalation_policy"),
         }

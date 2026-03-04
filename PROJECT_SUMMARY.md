@@ -25,6 +25,7 @@ NexusDev is a **Multi-Agent Automated Development System** built with:
 - RBAC is wired into API + service approval paths (`RBAC_ENABLED`, `RBAC_DEFAULT_ROLE`, `RBAC_USER_ROLES`).
 - Approval lifecycle now emits notification events via configurable channels (log/webhook/email/dashboard webhook).
 - Timeout handling supports pre-timeout reminders and optional auto-escalate/auto-reject policies.
+- Escalation now supports role/level routing (`HITL_ESCALATION_POLICY_ENABLED`, `HITL_ESCALATION_LEVELS`).
 - Session recovery endpoint/service added for manual recovery from `failed`/`rejected` states.
 - Approval listing supports state filter and pagination.
 - Workflow `wait_for_approval_node` now reads approval state from DB (no longer pure placeholder).

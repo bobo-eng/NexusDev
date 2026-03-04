@@ -76,6 +76,8 @@ class HITLSettings(BaseSettings):
     reminder_hours_before_timeout: int = 1
     auto_escalate_on_timeout: bool = False
     auto_reject_on_timeout: bool = False
+    escalation_policy_enabled: bool = True
+    escalation_levels: str = "developer,tech_lead,admin"
 
 
 class SOPSettings(BaseSettings):

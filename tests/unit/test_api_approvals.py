@@ -151,6 +151,31 @@ async def test_escalate_approval(api_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_escalate_approval_applies_role_routing(
+    api_client: AsyncClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("RBAC_ENABLED", "true")
+    monkeypatch.setenv("RBAC_DEFAULT_ROLE", "viewer")
+    monkeypatch.setenv("RBAC_USER_ROLES", "lead:tech_lead,admin_user:admin")
+    monkeypatch.setenv("HITL_ESCALATION_POLICY_ENABLED", "true")
+    monkeypatch.setenv("HITL_ESCALATION_LEVELS", "developer,tech_lead,admin")
+
+    approval_id = await _seed_approval(approvers=["lead", "admin_user"])
+
+    response = await api_client.post(
+        f"/approvals/{approval_id}/escalate",
+        json={"user": "lead", "reason": "Cross-team impact"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["state"] == "escalated"
+    assert payload["escalation_target_role"] == "admin"
+    assert payload["escalation_targets"] == ["admin_user"]
+
+
+@pytest.mark.asyncio
 async def test_cancel_approval(api_client: AsyncClient) -> None:
     approval_id = await _seed_approval()
 

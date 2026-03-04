@@ -532,11 +532,14 @@ def create_app() -> FastAPI:
                 detail=f"Cannot escalate approval in state '{approval.state.value}'",
             )
 
+        escalation_policy = updated.metadata.get("escalation_policy", {})
         return {
             "id": approval_id,
             "state": updated.state.value,
             "escalated_by": request.user,
             "reason": request.reason,
+            "escalation_target_role": escalation_policy.get("to_role"),
+            "escalation_targets": escalation_policy.get("targets", []),
         }
 
     @app.post("/approvals/{approval_id}/cancel")
