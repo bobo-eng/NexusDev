@@ -14,6 +14,7 @@ NexusDev is a **Multi-Agent Automated Development System** built with:
   - `full_graph`: execute the LangGraph workflow in one run
 - Workflow mode can be set by env `NEXUSDEV_WORKFLOW_MODE` or request/CLI `mode` override.
 - LangGraph workflow definitions remain under `packages/core/workflow/`.
+- In `full_graph` mode, stage snapshots are now persisted to DB and waiting-approval checkpoints auto-create approval records.
 - SOP now loads from YAML by default (with fallback to built-in MVP config when YAML load fails).
 - API now supports approval detail and comment endpoints:
   - `GET /approvals/{approval_id}`

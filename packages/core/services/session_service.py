@@ -13,6 +13,7 @@ from core.agents.base import AgentConfig
 from core.config.settings import get_settings, load_sop_config
 from core.domain.session import Session, SessionStatus
 from core.domain.stage import Stage, StageStatus, StageType
+from core.hitl.approval_sm import ApprovalState
 from core.observability.metrics import get_metrics
 from core.security.rbac import Permission, get_rbac
 from core.sop.sop_engine import SOPConfig, SOPEngine
@@ -278,6 +279,8 @@ class SessionService:
     async def _run_full_graph(self, session_id: UUID) -> dict[str, Any]:
         """Execute the full LangGraph workflow in one run."""
         session: Session | None = None
+        approval_stage: Stage | None = None
+        response: dict[str, Any] = {}
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
             session = await session_repo.get_by_id(session_id)
@@ -314,14 +317,16 @@ class SessionService:
 
         async with self.database.session() as db_session:
             session_repo = SessionRepository(db_session)
+            stage_repo = StageRepository(db_session)
             persisted = await session_repo.get_by_id(session_id)
             if not persisted:
                 return {"error": "Session not found"}
 
+            approval_stage = await self._sync_graph_stages(stage_repo, persisted, final_state)
             self._sync_session_status_from_graph(persisted, final_state)
             await session_repo.update(persisted)
 
-            response: dict[str, Any] = {
+            response = {
                 "session_id": str(session_id),
                 "status": persisted.status.value,
                 "current_stage": final_state.current_stage or None,
@@ -336,7 +341,19 @@ class SessionService:
             if persisted.status == SessionStatus.FAILED:
                 response["error"] = final_state.error_message or "Workflow execution failed"
 
-            return response
+        if (
+            response.get("requires_approval")
+            and approval_stage is not None
+            and approval_stage.requires_approval
+        ):
+            approval_id = await self._ensure_graph_stage_approval(
+                session_id=session_id,
+                stage=approval_stage,
+            )
+            if approval_id is not None:
+                response["approval_id"] = str(approval_id)
+
+        return response
 
     async def _execute_workflow(
         self,
@@ -805,6 +822,214 @@ class SessionService:
         if state.tests:
             outputs["tests"] = state.tests
         return outputs
+
+    async def _sync_graph_stages(
+        self,
+        stage_repo: StageRepository,
+        session: Session,
+        state: DevelopmentState,
+    ) -> Stage | None:
+        """Persist full-graph stage snapshots so status views stay traceable."""
+        stage_to_output_key: dict[StageType, str] = {
+            StageType.REQUIREMENT_ANALYSIS: "requirements",
+            StageType.SYSTEM_DESIGN: "design",
+            StageType.CODING: "code",
+            StageType.CODE_REVIEW: "review",
+            StageType.TESTING: "tests",
+        }
+
+        desired: dict[StageType, dict[str, Any]] = {}
+        for stage_type, output_key in stage_to_output_key.items():
+            output = getattr(state, output_key)
+            if output:
+                desired[stage_type] = {
+                    "status": StageStatus.COMPLETED,
+                    "result": output,
+                }
+
+        current_stage_type = self._graph_stage_name_to_type(state.current_stage)
+        if current_stage_type:
+            desired_status = self._graph_current_stage_status(state)
+            stage_payload = desired.setdefault(
+                current_stage_type,
+                {
+                    "status": desired_status,
+                    "result": {},
+                },
+            )
+            stage_payload["status"] = desired_status
+
+        if not desired:
+            return None
+
+        existing_stages = await stage_repo.get_by_session(session.id)
+        existing_by_type: dict[StageType, list[Stage]] = {}
+        for existing in existing_stages:
+            existing_by_type.setdefault(existing.stage_type, []).append(existing)
+
+        stage_order = [
+            StageType.REQUIREMENT_ANALYSIS,
+            StageType.SYSTEM_DESIGN,
+            StageType.CODING,
+            StageType.CODE_REVIEW,
+            StageType.TESTING,
+        ]
+
+        current_stage_entity: Stage | None = None
+        next_sequence = len(existing_stages)
+
+        for stage_type in stage_order:
+            payload = desired.get(stage_type)
+            if payload is None:
+                continue
+
+            result_payload = payload["result"]
+            target_status = payload["status"]
+            stage_candidates = existing_by_type.get(stage_type, [])
+            stage = self._select_graph_stage_candidate(stage_candidates)
+            is_new = False
+
+            if stage is None:
+                stage_def = self._get_stage_definition(stage_type)
+                if stage_def is None:
+                    continue
+                stage = Stage(
+                    session_id=session.id,
+                    name=stage_def.name,
+                    stage_type=stage_type,
+                    description=stage_def.description,
+                    agent_name=stage_def.agent_name,
+                    sequence=next_sequence,
+                    max_retries=stage_def.max_retries,
+                    requires_approval=stage_def.requires_approval,
+                )
+                next_sequence += 1
+                is_new = True
+
+            if result_payload:
+                stage.result = result_payload
+            stage.context = {
+                **stage.context,
+                "workflow_mode": "full_graph",
+                "current_stage": state.current_stage,
+            }
+
+            self._apply_graph_stage_status(
+                stage=stage,
+                target_status=target_status,
+                error_message=state.error_message,
+                approval_message=state.approval_message,
+            )
+
+            if stage.status in {StageStatus.COMPLETED, StageStatus.APPROVED}:
+                self._mark_stage_completed(session, stage.id)
+
+            if stage_type == current_stage_type:
+                current_stage_entity = stage
+                session.current_stage_id = stage.id
+
+            if is_new:
+                await stage_repo.create(stage)
+                existing_stages.append(stage)
+                existing_by_type.setdefault(stage_type, []).append(stage)
+            else:
+                await stage_repo.update(stage)
+
+        return current_stage_entity
+
+    def _graph_stage_name_to_type(self, stage_name: str | None) -> StageType | None:
+        """Map graph node names to StageType."""
+        graph_stage_map = {
+            "requirement_analysis": StageType.REQUIREMENT_ANALYSIS,
+            "system_design": StageType.SYSTEM_DESIGN,
+            "human_approval": StageType.SYSTEM_DESIGN,
+            "wait_for_approval": StageType.SYSTEM_DESIGN,
+            "coding": StageType.CODING,
+            "code_review": StageType.CODE_REVIEW,
+            "testing": StageType.TESTING,
+        }
+        if not stage_name:
+            return None
+        return graph_stage_map.get(stage_name)
+
+    def _graph_current_stage_status(self, state: DevelopmentState) -> StageStatus:
+        """Resolve current stage status for persisted stage snapshots."""
+        if state.current_stage in {"human_approval", "wait_for_approval"}:
+            if state.stage_status in {StageStatus.APPROVED, StageStatus.REJECTED, StageStatus.FAILED}:
+                return state.stage_status
+            return StageStatus.WAITING_APPROVAL
+        return state.stage_status
+
+    def _select_graph_stage_candidate(self, candidates: list[Stage]) -> Stage | None:
+        """Select a stage record candidate to update for full-graph sync."""
+        if not candidates:
+            return None
+        return max(candidates, key=lambda stage: (stage.sequence, stage.created_at))
+
+    def _apply_graph_stage_status(
+        self,
+        stage: Stage,
+        target_status: StageStatus,
+        error_message: str,
+        approval_message: str,
+    ) -> None:
+        """Apply graph stage status to a persisted Stage entity."""
+        if target_status == StageStatus.WAITING_APPROVAL:
+            stage.wait_for_approval()
+            stage.completed_at = None
+            return
+
+        if target_status == StageStatus.RUNNING:
+            stage.start()
+            stage.completed_at = None
+            return
+
+        if target_status == StageStatus.APPROVED:
+            stage.approve("system", approval_message or "")
+            return
+
+        if target_status == StageStatus.REJECTED:
+            stage.reject("system", approval_message or "")
+            return
+
+        if target_status == StageStatus.FAILED:
+            stage.fail(error_message or "Workflow execution failed")
+            return
+
+        if stage.started_at is None:
+            stage.start()
+        stage.complete()
+
+    async def _ensure_graph_stage_approval(
+        self,
+        session_id: UUID,
+        stage: Stage,
+    ) -> UUID | None:
+        """Ensure there is an active approval record for a waiting-approval graph stage."""
+        from core.services.approval_service import ApprovalService
+
+        approval_service = ApprovalService(self.database)
+        approvals = await approval_service.get_stage_approvals(stage.id)
+
+        for approval in approvals:
+            if approval.state in {
+                ApprovalState.PENDING,
+                ApprovalState.IN_REVIEW,
+                ApprovalState.ESCALATED,
+            }:
+                return approval.id
+
+        stage_def = self._get_stage_definition(stage.stage_type)
+        created = await approval_service.create_approval(
+            session_id=session_id,
+            stage_id=stage.id,
+            stage_name=stage.name,
+            requested_by="system",
+            request_message=f"Please review {stage.name} output",
+            timeout_hours=stage_def.approval_timeout_hours if stage_def else 24,
+            approvers=stage_def.approvers if stage_def else None,
+        )
+        return created.id
 
     def _determine_next_stage_type(self, stages: list[Stage]) -> StageType:
         """Determine the next stage type based on session progress."""

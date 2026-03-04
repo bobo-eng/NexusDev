@@ -101,10 +101,10 @@ async def system_design_node(state: DevelopmentState) -> DevelopmentState:
 
         # Store output
         state.design = result.model_dump()
-        state.stage_status = StageStatus.WAITING_APPROVAL  # HITL checkpoint
-        state.session_status = SessionStatus.WAITING_APPROVAL
+        state.stage_status = StageStatus.COMPLETED
+        state.session_status = SessionStatus.RUNNING
 
-        logger.info(f"[Session {state.session_id}] System design completed, awaiting approval")
+        logger.info(f"[Session {state.session_id}] System design completed")
 
     except Exception as e:
         logger.error(f"[Session {state.session_id}] System design failed: {e}")
@@ -339,6 +339,7 @@ async def wait_for_approval_node(state: DevelopmentState) -> DevelopmentState:
                 state.approval_record_id = approval.id
 
         if not approval:
+            state.session_status = SessionStatus.WAITING_APPROVAL
             return state
 
         if approval.state == ApprovalState.APPROVED:
@@ -366,5 +367,6 @@ async def wait_for_approval_node(state: DevelopmentState) -> DevelopmentState:
     except Exception as exc:
         logger.warning(f"[Session {state.session_id}] Failed to poll approval status: {exc}")
         state.stage_status = StageStatus.WAITING_APPROVAL
+        state.session_status = SessionStatus.WAITING_APPROVAL
 
     return state

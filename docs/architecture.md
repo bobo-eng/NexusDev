@@ -98,6 +98,8 @@ The repository includes a complete LangGraph workflow definition and
 `SessionService.run_stage()` supports two runtime modes:
 - `single_stage` (default): execute one stage at a time using SOP next-stage rules
 - `full_graph`: run the compiled LangGraph end-to-end in one invocation
+  - Persists graph stage snapshots into `stages` table
+  - Auto-creates approval records when graph stops at waiting-approval checkpoints
 
 LangGraph graph definition example:
 

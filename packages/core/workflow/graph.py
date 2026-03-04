@@ -219,6 +219,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
         lambda state: route_stage(state, "system_design", sop_engine),
         {
             RouteDecision.PROCEED: "human_approval",
+            RouteDecision.WAIT: "human_approval",
             RouteDecision.RETRY: "system_design",
             RouteDecision.FAIL: "error_handler",
         },
@@ -243,7 +244,7 @@ def create_development_graph(sop_engine: "SOPEngine") -> StateGraph:
         {
             RouteDecision.PROCEED: "coding",
             RouteDecision.RETRY: "system_design",
-            RouteDecision.WAIT: "wait_for_approval",
+            RouteDecision.WAIT: END,
             RouteDecision.FAIL: "error_handler",
         },
     )
