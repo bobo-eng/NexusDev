@@ -10,9 +10,11 @@ Benefits:
 - 支持大文件/二进制
 """
 
+import asyncio
 import hashlib
 import logging
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import aiofiles
@@ -207,7 +209,7 @@ class ArtifactStorage:
 
 
 class S3ArtifactStorage(ArtifactStorage):
-    """S3-based artifact storage (future implementation).
+    """S3-based artifact storage.
 
     For production use with S3-compatible storage.
     """
@@ -217,12 +219,169 @@ class S3ArtifactStorage(ArtifactStorage):
         bucket: str,
         prefix: str = "artifacts",
         endpoint_url: str | None = None,
+        region_name: str | None = None,
+        s3_client: Any | None = None,
     ):
+        if not bucket.strip():
+            raise ValueError("bucket must not be empty")
+
         self.bucket = bucket
-        self.prefix = prefix
+        self.prefix = prefix.strip("/")
         self.endpoint_url = endpoint_url
-        # TODO: Initialize boto3 client
-        raise NotImplementedError("S3 storage not yet implemented")
+        self.region_name = region_name
+
+        if s3_client is not None:
+            self._client = s3_client
+            return
+
+        try:
+            import boto3
+        except ImportError as exc:
+            raise RuntimeError(
+                "boto3 is required for S3ArtifactStorage; install boto3 or inject s3_client."
+            ) from exc
+
+        client_kwargs: dict[str, Any] = {}
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
+        if region_name:
+            client_kwargs["region_name"] = region_name
+
+        self._client = boto3.client("s3", **client_kwargs)
+
+    def _get_artifact_key(
+        self,
+        session_id: UUID,
+        artifact_id: UUID,
+        name: str,
+    ) -> str:
+        """Build S3 object key for an artifact."""
+        suffix = Path(name).suffix
+        filename = f"{artifact_id}{suffix}"
+        if self.prefix:
+            return f"{self.prefix}/{session_id}/{filename}"
+        return f"{session_id}/{filename}"
+
+    def _resolve_bucket_and_key(
+        self,
+        artifact: Artifact,
+    ) -> tuple[str, str]:
+        """Resolve bucket/key from artifact file path or artifact identity."""
+        if artifact.file_path:
+            if artifact.file_path.startswith("s3://"):
+                raw = artifact.file_path[len("s3://") :]
+                bucket, separator, key = raw.partition("/")
+                if not separator or not key:
+                    raise ValueError(f"Invalid S3 file path: {artifact.file_path}")
+                return bucket, key
+
+            return self.bucket, artifact.file_path.lstrip("/")
+
+        return self.bucket, self._get_artifact_key(artifact.session_id, artifact.id, artifact.name)
+
+    @staticmethod
+    def _is_not_found_error(error: Exception) -> bool:
+        """Check whether an S3 exception represents not-found."""
+        if isinstance(error, (FileNotFoundError, KeyError)):
+            return True
+
+        response = getattr(error, "response", None)
+        if isinstance(response, dict):
+            code = str(response.get("Error", {}).get("Code", ""))
+            return code in {"404", "NoSuchKey", "NotFound"}
+
+        return False
+
+    async def store(
+        self,
+        artifact: Artifact,
+        content: str | bytes | None = None,
+    ) -> Artifact:
+        """Store artifact content to S3."""
+        if content is None:
+            content = artifact.content
+
+        if not content:
+            logger.warning(f"Artifact {artifact.id} has no content to store")
+            return artifact
+
+        key = self._get_artifact_key(artifact.session_id, artifact.id, artifact.name)
+        body = content.encode("utf-8") if isinstance(content, str) else content
+
+        await asyncio.to_thread(
+            self._client.put_object,
+            Bucket=self.bucket,
+            Key=key,
+            Body=body,
+            ContentType=artifact.content_type,
+        )
+
+        checksum = self._compute_checksum(body)
+        file_size = len(body)
+
+        artifact.file_path = f"s3://{self.bucket}/{key}"
+        artifact.file_size = file_size
+        artifact.checksum = checksum
+        artifact.content = ""
+
+        logger.info(
+            f"Stored artifact {artifact.id} to s3://{self.bucket}/{key} "
+            f"(size={file_size}, checksum={checksum[:16]}...)"
+        )
+
+        return artifact
+
+    async def load(self, artifact: Artifact) -> str | bytes:
+        """Load artifact content from S3."""
+        if not artifact.file_path:
+            return artifact.content
+
+        bucket, key = self._resolve_bucket_and_key(artifact)
+
+        try:
+            response = await asyncio.to_thread(
+                self._client.get_object,
+                Bucket=bucket,
+                Key=key,
+            )
+        except Exception as exc:
+            if self._is_not_found_error(exc):
+                raise FileNotFoundError(f"Artifact object not found: s3://{bucket}/{key}") from exc
+            raise
+
+        body_stream = response.get("Body")
+        if hasattr(body_stream, "read"):
+            body = await asyncio.to_thread(body_stream.read)
+        elif isinstance(body_stream, bytes):
+            body = body_stream
+        else:
+            body = b""
+
+        content_type = artifact.content_type or response.get("ContentType", "")
+        is_binary = (
+            content_type.startswith("application/")
+            or content_type.startswith("image/")
+            or content_type.startswith("video/")
+        )
+        if is_binary:
+            return body
+
+        return body.decode("utf-8")
+
+    async def delete(self, artifact: Artifact) -> bool:
+        """Delete artifact object from S3."""
+        if not artifact.file_path:
+            return False
+
+        bucket, key = self._resolve_bucket_and_key(artifact)
+        await asyncio.to_thread(
+            self._client.delete_object,
+            Bucket=bucket,
+            Key=key,
+        )
+
+        logger.info(f"Deleted artifact object: s3://{bucket}/{key}")
+        return True
 
 
 async def store_artifact_with_content(
