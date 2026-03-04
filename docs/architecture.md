@@ -285,7 +285,7 @@ async def _call_llm(...) -> T:
 - Async/await throughout
 - Connection pooling
 - Artifact content lazy loading
-- LLM response caching (future)
+- LLM response caching (configurable via `LLM_CACHE_*`)
 
 ## Future Enhancements
 

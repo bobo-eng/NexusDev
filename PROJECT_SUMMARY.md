@@ -30,6 +30,7 @@ NexusDev is a **Multi-Agent Automated Development System** built with:
 - Workflow `wait_for_approval_node` now reads approval state from DB (no longer pure placeholder).
 - Approval can auto-advance to next stage when `HITL_AUTO_ADVANCE_AFTER_APPROVAL=true`.
 - Stage and approval flows now write runtime metrics through `core.observability.metrics`.
+- BaseAgent now supports configurable LLM response caching (`LLM_CACHE_ENABLED`, `LLM_CACHE_TTL_SECONDS`, `LLM_CACHE_MAX_ENTRIES`).
 
 ## Project Structure
 
