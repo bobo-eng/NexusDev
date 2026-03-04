@@ -1,5 +1,6 @@
 """Approval service for HITL workflow."""
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -79,6 +80,104 @@ class ApprovalService:
             return None
         return (record.timeout_at - datetime.utcnow()).total_seconds() / 3600.0
 
+    def _parse_notification_channels(self) -> set[str]:
+        """Parse notification channels from environment."""
+        raw = os.getenv("HITL_NOTIFICATION_CHANNELS", "").strip()
+        if not raw:
+            return set()
+        return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+    async def _notify_log(self, payload: dict[str, Any]) -> None:
+        """Write notification payload to structured log."""
+        logger.info(
+            f"Approval notification event={payload['event']} "
+            f"approval_id={payload['approval_id']} actor={payload['actor']}"
+        )
+
+    async def _notify_webhook(self, webhook_url: str, payload: dict[str, Any]) -> None:
+        """Send notification to generic webhook endpoint."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(webhook_url, json=payload)
+        except Exception as exc:
+            logger.warning(f"Failed to deliver approval webhook notification: {exc}")
+
+    async def _notify_dashboard(self, dashboard_url: str, payload: dict[str, Any]) -> None:
+        """Send notification to dashboard ingestion webhook."""
+        dashboard_payload = payload.copy()
+        dashboard_payload["channel"] = "dashboard"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(dashboard_url, json=dashboard_payload)
+        except Exception as exc:
+            logger.warning(f"Failed to deliver approval dashboard notification: {exc}")
+
+    def _send_email_sync(self, smtp_url: str, email_to: str, payload: dict[str, Any]) -> None:
+        """Send notification email via SMTP URL."""
+        import smtplib
+        from email.message import EmailMessage
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(smtp_url)
+        host = parsed.hostname
+        if not host:
+            raise ValueError("HITL_SMTP_URL must include hostname")
+
+        scheme = (parsed.scheme or "smtp").lower()
+        use_ssl = scheme == "smtps"
+        port = parsed.port or (465 if use_ssl else 587)
+        username = unquote(parsed.username) if parsed.username else ""
+        password = unquote(parsed.password) if parsed.password else ""
+        recipients = [item.strip() for item in email_to.split(",") if item.strip()]
+        if not recipients:
+            return
+
+        sender = os.getenv("HITL_EMAIL_FROM", "noreply@nexusdev.local")
+        starttls_enabled = os.getenv("HITL_SMTP_STARTTLS", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        message = EmailMessage()
+        message["Subject"] = f"[NexusDev] {payload['event']} ({payload['stage_name']})"
+        message["From"] = sender
+        message["To"] = ", ".join(recipients)
+        message.set_content(
+            "\n".join(
+                [
+                    f"event: {payload['event']}",
+                    f"approval_id: {payload['approval_id']}",
+                    f"session_id: {payload['session_id']}",
+                    f"stage: {payload['stage_name']}",
+                    f"state: {payload['state']}",
+                    f"actor: {payload['actor']}",
+                    f"message: {payload['message']}",
+                    f"timestamp: {payload['timestamp']}",
+                ]
+            )
+        )
+
+        if use_ssl:
+            smtp_client = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            smtp_client = smtplib.SMTP(host, port, timeout=10)
+
+        with smtp_client as client:
+            if not use_ssl and starttls_enabled:
+                client.starttls()
+            if username:
+                client.login(username, password)
+            client.send_message(message)
+
+    async def _notify_email(self, smtp_url: str, email_to: str, payload: dict[str, Any]) -> None:
+        """Send notification email asynchronously."""
+        try:
+            await asyncio.to_thread(self._send_email_sync, smtp_url, email_to, payload)
+        except Exception as exc:
+            logger.warning(f"Failed to deliver approval email notification: {exc}")
+
     async def _send_notification(
         self,
         event: str,
@@ -86,16 +185,34 @@ class ApprovalService:
         actor: str = "",
         message: str = "",
     ) -> None:
-        """Send approval notifications (log + optional webhook)."""
+        """Send approval notifications across configured channels."""
         webhook_url = os.getenv("HITL_WEBHOOK_URL", "").strip()
+        dashboard_url = os.getenv("HITL_DASHBOARD_WEBHOOK_URL", "").strip()
+        smtp_url = os.getenv("HITL_SMTP_URL", "").strip()
+        email_to = os.getenv("HITL_EMAIL_TO", "").strip()
         notifications_enabled = False
         try:
             notifications_enabled = bool(get_settings().hitl.enable_notifications)
         except Exception:
             notifications_enabled = False
 
-        if not notifications_enabled and not webhook_url:
+        has_external_target = bool(
+            webhook_url
+            or dashboard_url
+            or (smtp_url and email_to)
+        )
+        if not notifications_enabled and not has_external_target:
             return
+
+        channels = self._parse_notification_channels()
+        if not channels:
+            channels = {"log"}
+            if webhook_url:
+                channels.add("webhook")
+            if dashboard_url:
+                channels.add("dashboard")
+            if smtp_url and email_to:
+                channels.add("email")
 
         payload = {
             "event": event,
@@ -109,14 +226,22 @@ class ApprovalService:
             "timestamp": datetime.utcnow().isoformat(),
         }
 
-        logger.info(f"Approval notification event={event} approval_id={record.id} actor={actor}")
+        tasks: list[asyncio.Task[None]] = []
 
-        if webhook_url:
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(webhook_url, json=payload)
-            except Exception as exc:
-                logger.warning(f"Failed to deliver approval webhook notification: {exc}")
+        for channel in channels:
+            if channel == "log":
+                await self._notify_log(payload)
+            elif channel == "webhook":
+                if webhook_url:
+                    tasks.append(asyncio.create_task(self._notify_webhook(webhook_url, payload)))
+            elif channel == "dashboard":
+                if dashboard_url:
+                    tasks.append(asyncio.create_task(self._notify_dashboard(dashboard_url, payload)))
+            elif channel == "email" and smtp_url and email_to:
+                tasks.append(asyncio.create_task(self._notify_email(smtp_url, email_to, payload)))
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
     async def _load_to_cache(self, approval_id: UUID) -> ApprovalStateMachine | None:
         """Load approval from DB to cache."""

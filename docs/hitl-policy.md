@@ -92,12 +92,15 @@ only listed actors can claim/approve/reject/request-changes/escalate/remind.
 Current behavior:
 1. Worker periodically checks pending approvals for timeout
 2. Timed-out requests are marked `TIMED_OUT`
-3. Notification events are emitted (log + optional webhook via `HITL_WEBHOOK_URL`)
+3. Notification events are emitted to configurable channels:
+   - log
+   - webhook (`HITL_WEBHOOK_URL`)
+   - email (`HITL_SMTP_URL` + `HITL_EMAIL_TO`)
+   - dashboard webhook (`HITL_DASHBOARD_WEBHOOK_URL`)
 
 Planned enhancements:
-1. Multi-channel notifications (email/dashboard)
-2. Advanced escalation policies by role/level
-3. Rich timeout analytics
+1. Advanced escalation policies by role/level
+2. Rich timeout analytics
 
 Current timeout controls (env):
 - `HITL_REMINDER_HOURS_BEFORE_TIMEOUT`
@@ -125,9 +128,10 @@ approval = await approval_service.create_approval(
 ### 2. Notification
 
 Approvers are notified via:
-- Event log (always when enabled)
+- Event log
 - Webhook (`HITL_WEBHOOK_URL`, if configured)
-- Email / Dashboard (planned)
+- Email (`HITL_SMTP_URL` + `HITL_EMAIL_TO`, if configured)
+- Dashboard webhook (`HITL_DASHBOARD_WEBHOOK_URL`, if configured)
 
 ### 3. Review
 
