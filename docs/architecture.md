@@ -94,9 +94,10 @@ The approval state machine supports:
 
 ### Workflow Layer (LangGraph + SessionService)
 
-The repository includes a complete LangGraph workflow definition for full
-orchestration scenarios, and the current runtime path executes one stage at a
-time through `SessionService.run_stage()` using SOP rules to choose the next stage.
+The repository includes a complete LangGraph workflow definition and
+`SessionService.run_stage()` supports two runtime modes:
+- `single_stage` (default): execute one stage at a time using SOP next-stage rules
+- `full_graph`: run the compiled LangGraph end-to-end in one invocation
 
 LangGraph graph definition example:
 
@@ -214,10 +215,9 @@ CLI/API ──► SessionService.run_stage()
             DB
 ```
 
-Note: LangGraph nodes/routers are available in `packages/core/workflow/` but are
-not the default execution entrypoint in the current runtime path. The
-`wait_for_approval_node` now polls approval state from persistence and can
-route on approved/rejected/timed_out outcomes.
+Note: Runtime mode can be configured by env `NEXUSDEV_WORKFLOW_MODE` and
+overridden per request (`mode`). The `wait_for_approval_node` polls approval
+state from persistence and can route on approved/rejected/timed_out outcomes.
 
 ### 3. Human Approval
 

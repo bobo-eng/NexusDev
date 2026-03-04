@@ -18,7 +18,7 @@ from core.security.rbac import Permission, get_rbac
 from core.sop.sop_engine import SOPConfig, SOPEngine
 from core.storage.database import Database
 from core.storage.repository import SessionRepository, StageRepository
-from core.workflow.graph import create_development_graph
+from core.workflow.graph import DevelopmentState, create_development_graph
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,7 @@ class SessionService:
         self,
         session_id: UUID,
         stage_type: StageType | str | None = None,
+        mode: str | None = None,
     ) -> dict[str, Any]:
         """Execute a workflow stage.
 
@@ -151,10 +152,34 @@ class SessionService:
         Args:
             session_id: Session UUID
             stage_type: Specific stage type to run (auto-detected if None)
+            mode: Workflow mode, one of {"single_stage", "full_graph"}
 
         Returns:
             Execution result
         """
+        try:
+            workflow_mode = self._resolve_workflow_mode(mode)
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+        if workflow_mode == "full_graph":
+            if stage_type is not None:
+                return {"error": "stage_type is only supported in single_stage mode"}
+            result = await self._run_full_graph(session_id)
+        else:
+            result = await self._run_single_stage(session_id, stage_type)
+
+        if "error" not in result:
+            result.setdefault("mode", workflow_mode)
+
+        return result
+
+    async def _run_single_stage(
+        self,
+        session_id: UUID,
+        stage_type: StageType | str | None = None,
+    ) -> dict[str, Any]:
+        """Execute one stage using the legacy single-stage runtime."""
         stage: Stage | None = None
         session: Session | None = None
         stage_def: Any | None = None
@@ -249,6 +274,69 @@ class SessionService:
 
         # Execute the workflow outside of creation transaction to avoid DB locks
         return await self._execute_workflow(session, stage, stage_def)
+
+    async def _run_full_graph(self, session_id: UUID) -> dict[str, Any]:
+        """Execute the full LangGraph workflow in one run."""
+        session: Session | None = None
+        async with self.database.session() as db_session:
+            session_repo = SessionRepository(db_session)
+            session = await session_repo.get_by_id(session_id)
+            if not session:
+                return {"error": "Session not found"}
+
+            if not session.is_active():
+                return {"error": f"Session is not active (status: {session.status.value})"}
+
+            session.mark_running()
+            await session_repo.update(session)
+
+        if not session:
+            return {"error": "Session not found"}
+
+        try:
+            initial_state = self._build_initial_graph_state(session)
+            graph_result = await self.workflow_graph.ainvoke(initial_state.model_dump())
+            final_state = self._normalize_graph_result(graph_result, session.id)
+        except Exception as exc:
+            logger.error(f"[Session {session_id}] Full-graph execution failed: {exc}")
+            async with self.database.session() as db_session:
+                session_repo = SessionRepository(db_session)
+                persisted = await session_repo.get_by_id(session_id)
+                if persisted:
+                    persisted.mark_failed()
+                    await session_repo.update(persisted)
+
+            return {
+                "session_id": str(session_id),
+                "status": "failed",
+                "error": str(exc),
+            }
+
+        async with self.database.session() as db_session:
+            session_repo = SessionRepository(db_session)
+            persisted = await session_repo.get_by_id(session_id)
+            if not persisted:
+                return {"error": "Session not found"}
+
+            self._sync_session_status_from_graph(persisted, final_state)
+            await session_repo.update(persisted)
+
+            response: dict[str, Any] = {
+                "session_id": str(session_id),
+                "status": persisted.status.value,
+                "current_stage": final_state.current_stage or None,
+                "stage_status": final_state.stage_status.value,
+                "requires_approval": final_state.stage_status == StageStatus.WAITING_APPROVAL,
+                "outputs": self._extract_graph_outputs(final_state),
+            }
+
+            if final_state.approval_record_id:
+                response["approval_id"] = str(final_state.approval_record_id)
+
+            if persisted.status == SessionStatus.FAILED:
+                response["error"] = final_state.error_message or "Workflow execution failed"
+
+            return response
 
     async def _execute_workflow(
         self,
@@ -508,7 +596,7 @@ class SessionService:
         }
 
         if self._should_auto_advance_after_approval():
-            next_stage_result = await self.run_stage(session_id)
+            next_stage_result = await self.run_stage(session_id, mode="single_stage")
             if "error" in next_stage_result:
                 logger.warning(
                     f"[Session {session_id}] Auto-advance failed after approval: "
@@ -634,9 +722,89 @@ class SessionService:
         }
 
         if run_next:
-            response["next_stage"] = await self.run_stage(session_id)
+            response["next_stage"] = await self.run_stage(session_id, mode="single_stage")
 
         return response
+
+    def _resolve_workflow_mode(self, requested_mode: str | None) -> str:
+        """Resolve workflow mode with request override and env fallback."""
+        mode = requested_mode.strip() if requested_mode else ""
+        if not mode:
+            mode = os.getenv("NEXUSDEV_WORKFLOW_MODE", "single_stage")
+
+        normalized = mode.strip().lower()
+        if normalized not in {"single_stage", "full_graph"}:
+            raise ValueError(
+                f"Unknown workflow mode: {mode}. Supported modes: single_stage, full_graph"
+            )
+        return normalized
+
+    def _build_initial_graph_state(self, session: Session) -> DevelopmentState:
+        """Build initial LangGraph state from a session."""
+        requirements: dict[str, Any] = {"raw_requirement": session.requirement}
+        project_name = session.context.get("project_name")
+        if isinstance(project_name, str) and project_name:
+            requirements["project_name"] = project_name
+
+        return DevelopmentState(
+            session_id=session.id,
+            project_id=session.name,
+            session_status=SessionStatus.RUNNING,
+            requirements=requirements,
+            shared_context={"session_context": session.context},
+        )
+
+    def _normalize_graph_result(
+        self,
+        graph_result: Any,
+        session_id: UUID,
+    ) -> DevelopmentState:
+        """Normalize graph output to DevelopmentState."""
+        if isinstance(graph_result, DevelopmentState):
+            return graph_result
+        if isinstance(graph_result, dict):
+            payload = dict(graph_result)
+            payload.setdefault("session_id", session_id)
+            return DevelopmentState.model_validate(payload)
+        raise TypeError("Workflow graph returned unsupported result type")
+
+    def _sync_session_status_from_graph(
+        self,
+        session: Session,
+        state: DevelopmentState,
+    ) -> None:
+        """Sync persisted session status from LangGraph state."""
+        if state.session_status == SessionStatus.COMPLETED:
+            session.mark_completed()
+            return
+        if state.session_status == SessionStatus.WAITING_APPROVAL:
+            session.mark_waiting_approval()
+            return
+        if state.session_status == SessionStatus.APPROVED:
+            session.mark_approved()
+            return
+        if state.session_status == SessionStatus.REJECTED:
+            session.mark_rejected()
+            return
+        if state.session_status == SessionStatus.FAILED or state.error_message:
+            session.mark_failed()
+            return
+        session.mark_running()
+
+    def _extract_graph_outputs(self, state: DevelopmentState) -> dict[str, Any]:
+        """Extract non-empty stage outputs from graph state."""
+        outputs: dict[str, Any] = {}
+        if state.requirements:
+            outputs["requirements"] = state.requirements
+        if state.design:
+            outputs["design"] = state.design
+        if state.code:
+            outputs["code"] = state.code
+        if state.review:
+            outputs["review"] = state.review
+        if state.tests:
+            outputs["tests"] = state.tests
+        return outputs
 
     def _determine_next_stage_type(self, stages: list[Stage]) -> StageType:
         """Determine the next stage type based on session progress."""

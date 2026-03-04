@@ -194,6 +194,11 @@ def list(
 def run(
     session_id: str = typer.Argument(..., help="Session ID"),
     stage: str | None = typer.Option(None, "--stage", help="Specific stage to run"),
+    mode: str | None = typer.Option(
+        None,
+        "--mode",
+        help="Workflow mode: single_stage or full_graph",
+    ),
 ):
     """Run a workflow stage."""
 
@@ -207,11 +212,24 @@ def run(
             console.print("[red]Invalid session ID format[/red]")
             raise typer.Exit(1) from None
 
-        result = await service.run_stage(uuid, stage)
+        result = await service.run_stage(uuid, stage, mode)
 
         if "error" in result:
             console.print(f"[red]Error: {result['error']}[/red]")
             raise typer.Exit(1)
+
+        if result.get("mode") == "full_graph":
+            console.print(
+                Panel.fit(
+                    f"[green]Workflow executed (full graph)![/green]\n\n"
+                    f"Session ID: [cyan]{result['session_id']}[/cyan]\n"
+                    f"Status: [bold]{result['status']}[/bold]\n"
+                    f"Current Stage: [blue]{result.get('current_stage') or 'N/A'}[/blue]\n"
+                    f"Stage Status: [yellow]{result.get('stage_status', 'N/A')}[/yellow]",
+                    title="Workflow Executed",
+                )
+            )
+            return
 
         console.print(
             Panel.fit(

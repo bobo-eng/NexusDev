@@ -105,6 +105,7 @@ def create_app() -> FastAPI:
 
     class RunStageRequest(BaseModel):
         stage_type: str | None = None
+        mode: str | None = Field(default=None, description="Workflow mode: single_stage or full_graph")
         background: bool = Field(default=False, description="Run in background without waiting for completion")
 
     class ApprovalRequest(BaseModel):
@@ -257,7 +258,12 @@ def create_app() -> FastAPI:
 
         if is_background:
             # Run in background - schedule the task and return immediately
-            background_tasks.add_task(service.run_stage, uuid, request.stage_type if request else None)
+            background_tasks.add_task(
+                service.run_stage,
+                uuid,
+                request.stage_type if request else None,
+                request.mode if request else None,
+            )
             return {
                 "status": "queued",
                 "message": "Stage execution started in background",
@@ -266,7 +272,8 @@ def create_app() -> FastAPI:
 
         # Synchronous execution (original behavior)
         stage_type = request.stage_type if request else None
-        result = await service.run_stage(uuid, stage_type)
+        mode = request.mode if request else None
+        result = await service.run_stage(uuid, stage_type, mode)
 
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])

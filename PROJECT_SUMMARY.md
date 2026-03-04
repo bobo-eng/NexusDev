@@ -9,8 +9,11 @@ NexusDev is a **Multi-Agent Automated Development System** built with:
 
 ## Current Runtime Notes
 
-- `SessionService.run_stage()` currently executes one stage at a time by directly invoking the mapped agent.
-- LangGraph workflow definitions are available under `packages/core/workflow/` for full-graph orchestration scenarios.
+- `SessionService.run_stage()` now supports runtime mode switching:
+  - `single_stage` (default): execute one stage at a time via mapped agent
+  - `full_graph`: execute the LangGraph workflow in one run
+- Workflow mode can be set by env `NEXUSDEV_WORKFLOW_MODE` or request/CLI `mode` override.
+- LangGraph workflow definitions remain under `packages/core/workflow/`.
 - SOP now loads from YAML by default (with fallback to built-in MVP config when YAML load fails).
 - API now supports approval detail and comment endpoints:
   - `GET /approvals/{approval_id}`
